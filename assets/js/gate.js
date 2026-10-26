@@ -274,6 +274,13 @@
         // Handle Shortcode Content
         handleProtectedBlocks(userIsVerified);
 
+        // Wrappers parsed after gate.js ran are handled once the page has finished parsing.
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                handleProtectedBlocks(userIsVerified);
+            });
+        }
+
         // Hide button wrappers if verified
         if (userIsVerified) {
             var buttonWrappers = document.querySelectorAll('.agewallet-shortcode-wrapper');
@@ -286,10 +293,14 @@
     }
 
     // --- Execution ---
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initGate);
-    } else {
+    // Standard mode runs at once when the body exists (gate.js loads in the footer, after the page
+    // content and every [agewallet_protected] wrapper). Strict mode, or no body yet, waits for
+    // DOMContentLoaded.
+    var gateData = (typeof agewallet_gate_data !== 'undefined' && agewallet_gate_data) ? agewallet_gate_data : {};
+    if (document.readyState !== 'loading' || (document.body && !gateData.isStrictMode)) {
         initGate();
+    } else {
+        document.addEventListener('DOMContentLoaded', initGate);
     }
 
 })(); // End IIFE

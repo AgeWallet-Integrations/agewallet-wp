@@ -362,17 +362,9 @@ class AgeWallet_Gating_Manager {
 		// Use centralized check for context/rules.
 		$should_restrict = $this->should_restrict_content();
 
-		// Check for verified cookie (server-side).
-		$is_verified = false;
-		// Use Helper to verify HMAC signature
-		if ( isset( $_COOKIE[ self::VERIFIED_COOKIE_NAME ] ) && class_exists('AgeWallet_Helpers') ) {
-			 $is_verified = AgeWallet_Helpers::instance()->verify_signed_cookie(
-				sanitize_text_field( wp_unslash( $_COOKIE[ self::VERIFIED_COOKIE_NAME ] ) )
-			);
-		}
-
-		if ( ! $should_restrict || $is_verified ) {
-			$this->log_debug( 'Final Decision: No assets needed (Not restricted or already verified).' );
+		// Gated pages get the same assets for every visitor; gate.js checks the cookie in the browser.
+		if ( ! $should_restrict ) {
+			$this->log_debug( 'Final Decision: No assets needed (Not restricted).' );
 			return;
 		}
 
@@ -749,16 +741,6 @@ class AgeWallet_Gating_Manager {
 			return wp_kses_post( do_shortcode( $content ) );
 		}
 
-		// Check for Signed Cookie using AgeWallet_Helpers
-		if ( isset( $_COOKIE[ self::VERIFIED_COOKIE_NAME ] ) && class_exists('AgeWallet_Helpers') ) {
-			 if ( AgeWallet_Helpers::instance()->verify_signed_cookie(
-				sanitize_text_field( wp_unslash( $_COOKIE[ self::VERIFIED_COOKIE_NAME ] ) )
-			) ) {
-				 $this->log_debug( '[Gating Manager] Protected shortcode: User is verified (HMAC check), showing content.' );
-				 return do_shortcode( $content );
-			 }
-		}
-
 		// Ensure assets are loaded if maybe_enqueue_gate_assets didn't run or detect it early enough.
 		if ( ! $this->assets_enqueued ) {
 			$this->log_debug( '[Gating Manager] Enqueuing assets from protected_content_shortcode_handler (fallback needed).' );
@@ -837,7 +819,8 @@ class AgeWallet_Gating_Manager {
 			$placeholder_html = '<p style="color:red;">Error: Could not generate verification prompt.</p>';
 		}
 
-		// Output the wrapper structure. Content starts hidden, placeholder starts visible.
+		// Output the wrapper structure, the same for every visitor. Content starts hidden, placeholder
+		// starts visible; gate.js handleProtectedBlocks() swaps them for a verified visitor.
 		$wrapper_class     = 'agewallet-protected-wrapper';
 		$content_class     = 'agewallet-protected-content';
 		$placeholder_class = 'agewallet-protected-placeholder';
