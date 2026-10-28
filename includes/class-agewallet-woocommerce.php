@@ -20,6 +20,14 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		private static $instance = null;
 
 		/**
+		 * Names of the age-restricted items WooCommerce dropped from the cart in this request
+		 * (remember_removed_cart_item()).
+		 *
+		 * @var string[]
+		 */
+		private static $removed_in_request = array();
+
+		/**
 		 * Post meta key for per-product regulated status.
 		 * Values: 'not_regulated' | 'regulated' | 'override_not_regulated' | (absent — treated as 'not_regulated')
 		 */
@@ -35,6 +43,12 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 * Default per-product regulated status when no post meta is set.
 		 */
 		const PRODUCT_REGULATED_STATUS_DEFAULT = 'not_regulated';
+
+		/**
+		 * WooCommerce session key for the age-restricted items taken out of the shopper's cart.
+		 * Value: array of array( 'product_id' => int, 'variation_id' => int, 'variation' => array ).
+		 */
+		const SESSION_KEY_REMOVED_ITEMS = 'agewallet_removed_items';
 
 		public static function instance() {
 			if ( is_null( self::$instance ) ) {
@@ -61,11 +75,26 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			add_action( 'woocommerce_before_template_part', array( $this, 'open_buy_area' ), 1, 1 );
 			add_action( 'woocommerce_after_template_part', array( $this, 'close_buy_area' ), 999, 1 );
 
-			// 3. WooCommerce's refusal messages say why, for age-restricted products only.
+			// 3. WooCommerce's add-to-cart refusal says why, for age-restricted products only. When
+			//    such an item drops out of the cart while an order is being placed, the order is
+			//    refused with the reason; WooCommerce's cart-removal message is otherwise left out
+			//    for them and section 4 lists the item.
 			add_filter( 'woocommerce_cart_product_cannot_be_purchased_message', array( $this, 'filter_cannot_be_purchased_message' ), 10, 2 );
 			add_filter( 'woocommerce_cart_item_removed_message', array( $this, 'filter_cart_item_removed_message' ), 10, 2 );
+			add_action( 'woocommerce_store_api_cart_errors', array( $this, 'refuse_store_api_order' ) );
 
-			// 4. Server-side backstops: checkout validation (classic and cart API), and any new
+			// 4. Age-restricted items taken out of an unverified shopper's cart (by WooCommerce in
+			//    any request, or here when the cart or checkout page loads) are listed at the top
+			//    of the cart or checkout page, each linked to its product page.
+			add_action( 'woocommerce_remove_cart_item_from_session', array( $this, 'remember_removed_cart_item' ), 10, 2 );
+			add_action( 'template_redirect', array( $this, 'remove_refused_cart_items' ), 5 );
+			add_filter( 'render_block_woocommerce/cart', array( $this, 'prepend_removed_items_notice' ) );
+			add_filter( 'render_block_woocommerce/checkout', array( $this, 'prepend_removed_items_notice' ) );
+			add_action( 'woocommerce_before_cart', array( $this, 'print_removed_items_notice' ), 1 );
+			add_action( 'woocommerce_cart_is_empty', array( $this, 'print_removed_items_notice' ), 1 );
+			add_action( 'woocommerce_before_checkout_form', array( $this, 'print_removed_items_notice' ), 1 );
+
+			// 5. Server-side backstops: checkout validation (classic and cart API), and any new
 			//    order line, for payment plugins that build orders themselves.
 			add_action( 'woocommerce_check_cart_items', array( $this, 'block_unverified_checkout' ) );
 			add_action( 'woocommerce_before_order_item_object_save', array( $this, 'guard_unverified_order_item' ), 5 );
@@ -242,7 +271,13 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * An age-restricted item taken out of the cart, e.g. when a verification has lapsed.
+		 * woocommerce_cart_item_removed_message, for an age-restricted item this visitor can't buy:
+		 *   - on the classic checkout's submit (is_classic_order_request()): the reason, as an error
+		 *     notice that refuses the order and is shown on the checkout; the checkout's order
+		 *     summary is redrawn (WooCommerce's refresh_totals session flag);
+		 *   - otherwise: an empty message, so WooCommerce adds no notice (wc_add_notice() skips
+		 *     empty messages). The cart API's checkout is refused by refuse_store_api_order().
+		 * Either way remember_removed_cart_item() lists the item for the cart and checkout pages.
 		 *
 		 * @param string     $message
 		 * @param WC_Product $product
@@ -252,8 +287,208 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			if ( ! self::refuses( $product ) ) {
 				return $message;
 			}
+			if ( ! self::is_classic_order_request() ) {
+				return '';
+			}
+			if ( WC()->session ) {
+				WC()->session->set( 'refresh_totals', true );
+			}
+			return self::removed_from_cart_message( $product->get_name() );
+		}
+
+		/**
+		 * woocommerce_store_api_cart_errors: on the cart API's checkout (Place order in the
+		 * Checkout block), one error per age-restricted item dropped from the cart in this request,
+		 * so the order is refused (409) with the reason.
+		 *
+		 * @param WP_Error $errors Cart errors; any error stops the order.
+		 */
+		public function refuse_store_api_order( $errors ) {
+			if ( empty( self::$removed_in_request ) || ! self::is_store_api_order_request() ) {
+				return;
+			}
+			foreach ( array_unique( self::$removed_in_request ) as $name ) {
+				$errors->add( 'agewallet_age_verification_required', self::removed_from_cart_message( $name ) );
+			}
+		}
+
+		/**
+		 * The reason an age-restricted item left the cart, for a refused order.
+		 *
+		 * @param string $name Product name.
+		 * @return string
+		 */
+		private static function removed_from_cart_message( $name ) {
 			/* translators: %s: product name */
-			return sprintf( __( '%s was removed from your cart because it requires age verification. Please verify your age on the product page, then add it again.', 'agewallet-oidc-client' ), $product->get_name() );
+			return sprintf( __( '%s was removed from your cart because it requires age verification. Please verify your age on the product page, then add it again.', 'agewallet-oidc-client' ), $name );
+		}
+
+		/**
+		 * True for the classic checkout's submit: ?wc-ajax=checkout, or the checkout form posted
+		 * without JavaScript.
+		 */
+		private static function is_classic_order_request() {
+			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- only reads which request this is.
+			$ajax = isset( $_GET['wc-ajax'] ) ? sanitize_key( wp_unslash( $_GET['wc-ajax'] ) ) : '';
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- only checks the field exists.
+			return 'checkout' === $ajax || isset( $_POST['woocommerce_checkout_place_order'] );
+		}
+
+		/**
+		 * True for the cart API's checkout: POST /wc/store/v1/checkout (also /wc/store/checkout).
+		 */
+		private static function is_store_api_order_request() {
+			$method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : 'GET';
+			$route  = isset( $GLOBALS['wp']->query_vars['rest_route'] ) ? (string) $GLOBALS['wp']->query_vars['rest_route'] : '';
+			return 'POST' === $method && (bool) preg_match( '#^/wc/store(?:/v\d+)?/checkout/?$#', $route );
+		}
+
+		/**
+		 * woocommerce_remove_cart_item_from_session: WooCommerce dropped an item while loading the
+		 * cart. An age-restricted item this visitor can't buy goes on the removed-items list, and
+		 * its name on self::$removed_in_request.
+		 *
+		 * @param string $key    Cart item key.
+		 * @param array  $values Cart item: product_id, variation_id, variation (the chosen options), quantity.
+		 */
+		public function remember_removed_cart_item( $key, $values ) {
+			$product = wc_get_product( $values['variation_id'] ? $values['variation_id'] : $values['product_id'] );
+			if ( self::refuses( $product ) ) {
+				self::add_removed_item( $values );
+				self::$removed_in_request[] = $product->get_name();
+			}
+		}
+
+		/**
+		 * template_redirect, priority 5 (before WooCommerce's empty-checkout redirect to the cart at
+		 * 10): on the cart and checkout pages, takes out the items this shopper can't buy yet and
+		 * puts each on the removed-items list. Updates the session cart and a logged-in customer's
+		 * saved cart.
+		 */
+		public function remove_refused_cart_items() {
+			if ( ! self::is_cart_or_checkout_page() || ! WC()->cart || WC()->cart->is_empty() ) {
+				return;
+			}
+			$removed = false;
+			foreach ( WC()->cart->get_cart() as $key => $item ) {
+				if ( empty( $item['data'] ) || ! self::refuses( $item['data'] ) ) {
+					continue;
+				}
+				self::add_removed_item( $item );
+				WC()->cart->remove_cart_item( $key );
+				$removed = true;
+			}
+			if ( $removed ) {
+				WC()->cart->calculate_totals();
+			}
+		}
+
+		/**
+		 * Adds a cart item to the removed-items list in the shopper's WooCommerce session
+		 * (SESSION_KEY_REMOVED_ITEMS), once per product and chosen options.
+		 *
+		 * @param array $values Cart item: product_id, variation_id, variation.
+		 */
+		private static function add_removed_item( $values ) {
+			if ( ! function_exists( 'WC' ) || ! WC()->session ) {
+				return;
+			}
+			$entry = array(
+				'product_id'   => absint( $values['product_id'] ?? 0 ),
+				'variation_id' => absint( $values['variation_id'] ?? 0 ),
+				'variation'    => isset( $values['variation'] ) && is_array( $values['variation'] ) ? $values['variation'] : array(),
+			);
+			$items = WC()->session->get( self::SESSION_KEY_REMOVED_ITEMS );
+			$items = is_array( $items ) ? $items : array();
+			if ( in_array( $entry, $items, true ) ) {
+				return;
+			}
+			$items[] = $entry;
+			WC()->session->set( self::SESSION_KEY_REMOVED_ITEMS, $items );
+		}
+
+		/**
+		 * render_block_woocommerce/cart, render_block_woocommerce/checkout: the removed-items notice
+		 * above the Cart or Checkout block.
+		 *
+		 * @param string $block_content The block's HTML.
+		 * @return string
+		 */
+		public function prepend_removed_items_notice( $block_content ) {
+			return self::removed_items_notice_html() . $block_content;
+		}
+
+		/**
+		 * woocommerce_before_cart, woocommerce_cart_is_empty, woocommerce_before_checkout_form: the
+		 * removed-items notice at the top of the classic cart (full or empty) and checkout.
+		 */
+		public function print_removed_items_notice() {
+			echo self::removed_items_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in removed_items_notice_html().
+		}
+
+		/**
+		 * The removed-items notice, on the cart or checkout page, once per request, then the list is
+		 * emptied. Each product name links to its product page (a variation's link carries the chosen
+		 * options). Items back in the cart are left out. Returns '' when there is nothing to show.
+		 *
+		 * @return string HTML.
+		 */
+		private static function removed_items_notice_html() {
+			static $shown = false;
+			if ( $shown || ! self::is_cart_or_checkout_page() || ! WC()->session ) {
+				return '';
+			}
+			$items = WC()->session->get( self::SESSION_KEY_REMOVED_ITEMS );
+			if ( empty( $items ) || ! is_array( $items ) ) {
+				return '';
+			}
+			$shown = true;
+			WC()->session->set( self::SESSION_KEY_REMOVED_ITEMS, null );
+
+			$in_cart = array();
+			foreach ( WC()->cart ? WC()->cart->get_cart() : array() as $cart_item ) {
+				$in_cart[] = absint( $cart_item['product_id'] ) . ':' . absint( $cart_item['variation_id'] );
+			}
+			$links = array();
+			foreach ( $items as $item ) {
+				if ( in_array( $item['product_id'] . ':' . $item['variation_id'], $in_cart, true ) ) {
+					continue;
+				}
+				$product = wc_get_product( $item['variation_id'] ? $item['variation_id'] : $item['product_id'] );
+				if ( ! $product instanceof WC_Product ) {
+					continue;
+				}
+				$url     = $product instanceof WC_Product_Variation ? $product->get_permalink( $item ) : $product->get_permalink();
+				$links[] = '<strong><a href="' . esc_url( $url ) . '">' . esc_html( $product->get_name() ) . '</a></strong>';
+			}
+
+			$count = count( $links );
+			if ( 0 === $count ) {
+				return '';
+			}
+			if ( 1 === $count ) {
+				/* translators: %s: product name, linked to the product's page */
+				$body = '<p style="margin:0;">' . sprintf( esc_html__( '%s was removed from your cart because it requires age verification. Verify your age on its page, then add it again.', 'agewallet-oidc-client' ), $links[0] ) . '</p>';
+			} else {
+				$body = '<p style="margin:0;">' . esc_html( _n( 'This item was removed from your cart because it requires age verification:', 'These items were removed from your cart because they require age verification:', $count, 'agewallet-oidc-client' ) ) . '</p>'
+					. '<ul style="margin:8px 0 8px 1.25em;padding:0;"><li>' . implode( '</li><li>', $links ) . '</li></ul>'
+					. '<p style="margin:0;">' . esc_html( _n( 'Verify your age on its page, then add it again.', 'Verify your age on any of these pages, then add them again. One verification covers them all.', $count, 'agewallet-oidc-client' ) ) . '</p>';
+			}
+			return '<div class="agewallet-removed-items" style="margin:12px 0;padding:12px 14px;border:1px solid currentColor;border-radius:6px;">' . $body . '</div>';
+		}
+
+		/**
+		 * True for the cart page or the checkout page, not the checkout's order-pay and
+		 * order-received pages.
+		 */
+		private static function is_cart_or_checkout_page() {
+			if ( ! function_exists( 'is_cart' ) || ! function_exists( 'is_wc_endpoint_url' ) ) {
+				return false;
+			}
+			if ( is_wc_endpoint_url( 'order-pay' ) || is_wc_endpoint_url( 'order-received' ) ) {
+				return false;
+			}
+			return is_cart() || self::is_checkout_request();
 		}
 
 		/**
@@ -279,10 +514,14 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 * woocommerce_check_cart_items: fires in both classic checkout validation and the
 		 * Store API cart validation (block checkout / express-pay). Adds a blocking error
 		 * when the cart needs verification. Skipped on the cart page so it doesn't nag
-		 * before the shopper reaches checkout.
+		 * before the shopper reaches checkout, and on plain page loads other than the checkout page
+		 * (WooCommerce's blocks run this action while building any page).
 		 */
 		public function block_unverified_checkout() {
 			if ( function_exists( 'is_cart' ) && is_cart() ) {
+				return;
+			}
+			if ( self::is_page_render() && ! self::is_checkout_request() ) {
 				return;
 			}
 			if ( self::cart_requires_verification() ) {
