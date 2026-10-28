@@ -108,9 +108,46 @@
     }
 
     /**
-     * STRICT MODE: Fetches secure content via API and injects it.
+     * STRICT MODE: Swaps the spinner for the gate UI and points I Agree back to this page.
+     * @param {string} launchUrl The launch address.
+     * @param {string} signedMetadata Signed metadata for the launch link ('' for none).
      */
-    function fetchAndInjectContent(apiEndpoint) {
+    function showStrictGate(launchUrl, signedMetadata) {
+        var spinner = document.getElementById('aw-gate-spinner');
+        var gateUI = document.getElementById('aw-gate-ui');
+
+        // Hide Spinner
+        if (spinner) {
+            spinner.style.display = 'none';
+        }
+
+        // Show Gate
+        if (gateUI) {
+            gateUI.style.display = 'block';
+
+            // Dynamic Redirect: Update the button to return to *this* page
+            var agreeBtn = gateUI.querySelector('.aw-gate__btn--yes');
+            if (agreeBtn && launchUrl) {
+                var currentUrl = window.location.href;
+                var separator = launchUrl.indexOf('?') !== -1 ? '&' : '?';
+                var finalUrl = launchUrl + separator + 'redirect_to=' + encodeURIComponent(currentUrl);
+                if (signedMetadata) {
+                    finalUrl += '&agewallet_md=' + encodeURIComponent(signedMetadata);
+                }
+                agreeBtn.setAttribute('data-redirect-url', finalUrl);
+            }
+        } else {
+            // Fallback if template is missing UI parts
+            console.error('[AgeWallet Strict] Critical: #aw-gate-ui container missing from template.');
+        }
+    }
+
+    /**
+     * STRICT MODE: Fetches secure content via API and injects it.
+     * @param {string} apiEndpoint The content route address.
+     * @param {function} onUnverified Runs when the API answers 403 `unverified`.
+     */
+    function fetchAndInjectContent(apiEndpoint, onUnverified) {
         if (!apiEndpoint) {
             console.error('[AgeWallet Strict] API Endpoint missing.');
             return;
@@ -143,6 +180,15 @@
                     console.error('[AgeWallet Strict] JSON Parse Error', e);
                 }
             } else {
+                var refusal = null;
+                try {
+                    refusal = JSON.parse(xhr.responseText);
+                } catch (e) {}
+                // 403 `unverified`: no cookie, or one the server refuses (expired, or signed with another key).
+                if (xhr.status === 403 && refusal && refusal.error === 'unverified') {
+                    onUnverified();
+                    return;
+                }
                 console.error('[AgeWallet Strict] HTTP Error', xhr.statusText);
             }
         };
@@ -220,38 +266,15 @@
 
         // --- 2. STRICT MODE LOGIC ---
         if (isStrictMode) {
+            var showGate = function() {
+                showStrictGate(launchUrl, signedMetadata);
+            };
             if (userIsVerified) {
-                // Verified: Fetch content via API and Inject
-                fetchAndInjectContent(apiEndpoint);
+                // Verified: Fetch content via API and Inject; the gate if the API refuses the cookie
+                fetchAndInjectContent(apiEndpoint, showGate);
             } else {
                 // Not Verified: Toggle from Spinner to Gate UI
-                var spinner = document.getElementById('aw-gate-spinner');
-                var gateUI = document.getElementById('aw-gate-ui');
-
-                // Hide Spinner
-                if (spinner) {
-                    spinner.style.display = 'none';
-                }
-
-                // Show Gate
-                if (gateUI) {
-                    gateUI.style.display = 'block';
-
-                    // Dynamic Redirect: Update the button to return to *this* page
-                    var agreeBtn = gateUI.querySelector('.aw-gate__btn--yes');
-                    if (agreeBtn && launchUrl) {
-                        var currentUrl = window.location.href;
-                        var separator = launchUrl.indexOf('?') !== -1 ? '&' : '?';
-                        var finalUrl = launchUrl + separator + 'redirect_to=' + encodeURIComponent(currentUrl);
-                        if (signedMetadata) {
-                            finalUrl += '&agewallet_md=' + encodeURIComponent(signedMetadata);
-                        }
-                        agreeBtn.setAttribute('data-redirect-url', finalUrl);
-                    }
-                } else {
-                    // Fallback if template is missing UI parts
-                    console.error('[AgeWallet Strict] Critical: #aw-gate-ui container missing from template.');
-                }
+                showGate();
             }
             return; // Stop execution of Standard Mode logic
         }

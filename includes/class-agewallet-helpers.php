@@ -358,6 +358,44 @@
             return true;
         }
 
+        /**
+         * Expires the verification cookie in the browser, with the path and domain the success page
+         * sets it with (agewallet_cookie_path, agewallet_verified_cookie_attributes). Does nothing when
+         * the request carries no verification cookie or headers are already sent.
+         *
+         * @return void
+         */
+        public function clear_verified_cookie() {
+            $cookie_name = defined( 'AgeWallet_Gating_Manager::VERIFIED_COOKIE_NAME' )
+                ? AgeWallet_Gating_Manager::VERIFIED_COOKIE_NAME
+                : 'agewallet_verified';
+
+            if ( ! isset( $_COOKIE[ $cookie_name ] ) || headers_sent() ) {
+                return;
+            }
+
+            $attributes = array(
+                'path'     => $this->get_site_path(),
+                'SameSite' => 'Lax',
+            );
+            if ( is_ssl() ) {
+                $attributes['Secure'] = true;
+            }
+            $attributes = array_change_key_case( (array) apply_filters( 'agewallet_verified_cookie_attributes', $attributes ), CASE_LOWER );
+
+            setcookie(
+                $cookie_name,
+                '',
+                array(
+                    'expires'  => 1,
+                    'path'     => isset( $attributes['path'] ) ? (string) $attributes['path'] : '/',
+                    'domain'   => isset( $attributes['domain'] ) ? (string) $attributes['domain'] : '',
+                    'secure'   => ! empty( $attributes['secure'] ),
+                    'samesite' => isset( $attributes['samesite'] ) ? (string) $attributes['samesite'] : 'Lax',
+                )
+            );
+        }
+
         // --- URL Helpers ---
 
         /** Gets the callback URL (/agewallet/callback/). @since 0.1.0 @return string */

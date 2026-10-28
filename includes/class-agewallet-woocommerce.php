@@ -98,13 +98,18 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 
 		/**
 		 * True if the visitor holds a valid (HMAC + unexpired) verification cookie.
-		 * Uses the same signed-cookie check as the page gate. Checked once per request.
+		 * Uses the same signed-cookie check as the page gate. Checked once per request. A cookie
+		 * that fails the check is expired in the browser by this response
+		 * (AgeWallet_Helpers::clear_verified_cookie()).
 		 */
 		public static function visitor_is_verified() {
 			static $verified = null;
 			if ( null === $verified ) {
 				$verified = class_exists( 'AgeWallet_Helpers' )
 					&& null !== AgeWallet_Helpers::instance()->get_verified_cookie_payload();
+				if ( ! $verified && class_exists( 'AgeWallet_Helpers' ) ) {
+					AgeWallet_Helpers::instance()->clear_verified_cookie();
+				}
 			}
 			return $verified;
 		}
