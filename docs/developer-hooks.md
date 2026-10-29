@@ -17,7 +17,7 @@ This plugin includes a number of action and filter hooks to allow for advanced c
 * `agewallet_cookie_path` (filter) - Modify the path used for the verification cookie.
 * `agewallet_current_url` (filter) - Override the auto-detected current URL.
 * `agewallet_cookie_payload` (filter) - Modify the data array stored inside the signed cookie before it is signed.
-* `agewallet_cookie_validation_error` (action) - Fires when a cookie fails HMAC validation (args: error_type, cookie_value).
+* `agewallet_cookie_validation_error` (action) - Fires when a cookie fails validation: a bad HMAC signature (error_type `signature_mismatch`) or an expired payload (error_type `expired`) (args: error_type, cookie_value).
 
 = Metadata Builder (class-agewallet-metadata-builder.php) =
 * `agewallet_auto_metadata` (filter) - Modify the resolved auto-metadata fields array (post_id, post_slug, request_path, user_id, etc.) before it is JSON-encoded into the metadata string.
@@ -53,7 +53,7 @@ This plugin includes a number of action and filter hooks to allow for advanced c
 * `agewallet_loopback_url` (filter) - Modify the URL used by the cache builder (useful for specific proxy setups).
 * `agewallet_loopback_request_args` (filter) - Modify HTTP args (timeout, headers) for the cache build request.
 * `agewallet_api_content_response` (filter) - Modify the HTML content string before it is returned by the API to the frontend.
-* `agewallet_is_user_verified` (filter) - Master boolean override for server-side verification checks.
+* `agewallet_is_user_verified` (filter) - Strict mode only. Runs when a visitor who has an `agewallet_verified` cookie asks for a page's protected content. Return true to send the content without checking the cookie's signature and expiry. It isn't run for visitors with no cookie, and Standard mode and WooCommerce don't use it. No arguments; default false.
 * `agewallet_cache_invalidation_events` (filter) - Modify the list of WP actions that trigger a global cache purge.
 * `agewallet_before_cache_purge` (action) - Fires immediately before cache files are deleted (args: type, count/id).
 * `agewallet_after_cache_purge` (action) - Fires immediately after cache files are deleted.
@@ -64,7 +64,7 @@ This plugin includes a number of action and filter hooks to allow for advanced c
 * `agewallet_regulated_cart_triggers` (filter) - Modify the array of product IDs, category term IDs, and tag term IDs that triggered the regulated-cart check. Used both for the gating decision and for the cart_triggers audit field stored in metadata.
 
 = Public Helper Functions =
-* `agewallet_get_metadata()` - Returns the metadata value attached to the currently verified user's session as a string, or empty string if not available. Reads from the signed verification cookie payload.
+* `agewallet_get_metadata()` - Returns the metadata value attached to the currently verified user's session as a string, or null if not available. Reads from the signed verification cookie payload.
 
 = Public PHP Methods =
 * `AgeWallet_WooCommerce::checkout_gating_mode()` - Returns the configured WC Checkout gating mode as a string: `'off'`, `'force-always'`, or `'conditional-on-cart'`.

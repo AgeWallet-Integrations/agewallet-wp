@@ -36,8 +36,7 @@ Useful for adjusting the minimum height or layout during the initial check.
 * `.aw-spinner` - The loading spinner animation.
 Controls the size, border color, and speed of the spinner.
 
-* `body.agewallet-strict-loading` - The class applied to the body while the skeleton is active.
-Useful for hiding other page elements while verification is in progress.
+* `body.aw-verify-body` - The class on the body of the Strict mode page while it loads and while the gate shows.
 
 = 3. Logo Area =
 

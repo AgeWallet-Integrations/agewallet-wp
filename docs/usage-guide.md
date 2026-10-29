@@ -53,7 +53,7 @@ Checkout Gating chooses which products shoppers must verify their age to buy:
 
 For a product that needs verification, until the shopper verifies: its add-to-cart area (including any express payment buttons, such as PayPal, Apple Pay or Google Pay) is replaced by a "Verify my age" button that starts verification and brings them back to the product; WooCommerce refuses to add it to any cart, by any route; and checkout refuses any order containing it. After verifying, the product can be bought as normal. Product pages stay the same for every visitor, so page caching keeps working; clear your page cache once after updating the plugin.
 
-Checkout Metadata Fields: pick which cart-context values get attached to each verification as metadata that round-trips through the OIDC flow back to your backend. Available fields: cart hash, cart total, currency code, WordPress user ID, billing country, number of line items. Defaults: cart hash, cart total, currency. Use the `agewallet_wc_checkout_metadata` filter (see Developer Hooks) for fully custom payloads.
+Checkout Metadata Fields: pick which cart-context values get attached to each verification that starts from the checkout page, as metadata that round-trips through the OIDC flow back to your backend. Available fields: cart hash, cart total, currency code, WordPress user ID, billing country, number of line items. Defaults: cart hash, cart total, currency. Use the `agewallet_wc_checkout_metadata` filter (see Developer Hooks) for fully custom payloads.
 
 Per-Product Regulated Status: open any product in WooCommerce > Products > Edit Product > AgeWallet tab.
 
@@ -79,6 +79,8 @@ You can customize the age gate to match your brand on the Step 3: Gate Appearanc
 
 = 4. Strict Mode Analytics (Step 4) =
 
+These settings are in the Strict Mode Analytics section of the Step 4: Strict Mode Settings page.
+
 Note: These settings only apply if you are using High Security (Strict) Mode.
 
 Because Strict Mode short-circuits the theme during verification, the analytics tags your theme normally renders do NOT fire on the "Verifying..." loading screen. Enter the IDs of the services you use and AgeWallet renders their official snippets directly. Leave any field blank to skip it.
@@ -96,6 +98,8 @@ On the Edit Post, Edit Page or Edit Product screen, you will see an "Age Restric
 * Require age verification: Check this to force the gate on this single page, even if your global setting is "No automatic protection."
 * Exclude from age verification: Check this to make the page viewable by anyone, even if it's in a protected path (like `/shop/`) or a protected Category.
 * If both are ticked, Exclude wins.
+
+The Age Restriction box works on single posts, pages and products. It has no effect on your Posts page (Settings → Reading) or the WooCommerce Shop page; to gate or exclude those, add their address to Paths to Protect or Paths to Exclude.
 
 On a WooCommerce product, this box only controls viewing. Whether the product can be bought before verifying is set separately, in Product data → AgeWallet (see section E). The two work independently: with Exclude ticked and the product Regulated, anyone can view the product's page, but it can't be bought until the shopper verifies.
 
@@ -115,4 +119,4 @@ If you use High Security Mode, the plugin generates static HTML caches of your p
 
 * Automatic Management: The cache is automatically cleared when you update posts, switch themes, create/edit menus, or modify taxonomy terms.
 * Scheduled Cleanup: You can configure an automatic cache purge schedule (default: every 4 hours) in the "Cache Control" settings tab.
-* Manual Purge: If you change settings and don't see them update immediately, click the "Purge Cache" button available in the sidebar of any AgeWallet settings page (or under Cache Control).
+* Manual Purge: If you change settings and don't see them update immediately, click the "Purge Cache" button in the sidebar of any AgeWallet settings page, which appears when High Security (Strict) mode is on (or use the purge button under Cache Control).

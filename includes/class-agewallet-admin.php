@@ -560,7 +560,7 @@ class AgeWallet_Admin {
 	}
 
 	public function render_wc_section_description() {
-		echo '<p>' . esc_html__( 'Choose which products shoppers must verify their age to buy. Until they verify, those products can\'t be added to the cart, and their add-to-cart area, express payment buttons included, is replaced by a Verify my age button. Per-checkout context (cart hash, total, etc.) is attached to the verification as metadata.', 'agewallet-oidc-client' ) . '</p>';
+		echo '<p>' . esc_html__( 'Choose which products shoppers must verify their age to buy. Until they verify, those products can\'t be added to the cart, and their add-to-cart area, express payment buttons included, is replaced by a Verify my age button. Per-checkout context (cart hash, total, etc.) is attached as metadata to verifications that start from the checkout page.', 'agewallet-oidc-client' ) . '</p>';
 		echo '<p class="description">' . esc_html__( 'Use the `agewallet_wc_checkout_metadata` filter to fully customise the metadata payload from code.', 'agewallet-oidc-client' ) . '</p>';
 	}
 

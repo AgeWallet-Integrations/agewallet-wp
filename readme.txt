@@ -2,7 +2,7 @@
 Contributors: agewallet, cookedbiscuits
 Tags: age verification, age estimation, age gate, woocommerce, content gating
 Requires at least: 6.0
-Tested up to: 7.0
+Tested up to: 7.1
 Requires PHP: 7.4
 Stable tag: 1.5.8
 License: GPLv2 or later
@@ -34,7 +34,7 @@ Rules cover the whole site, individual URL paths, taxonomies (categories, tags, 
 
 = Fully customizable gate =
 
-Customize the age gate from the Gate Appearance tab (logo, copy, colours, button radii) and override anything else from Appearance → Customize → Additional CSS. Strict-mode analytics (Google Analytics 4, Google Tag Manager, Facebook Pixel) are configurable from the Strict Mode Analytics tab.
+Customize the age gate from the Gate Appearance tab (logo, copy, colours, button radii) and override anything else from Appearance → Customize → Additional CSS. Strict-mode analytics (Google Analytics 4, Google Tag Manager, Facebook Pixel) are configurable from the Strict Mode Analytics section of the Strict Mode Settings page.
 
 For the full feature list see Other Notes. Setup walkthroughs, the CSS hook reference, and the developer hook list ship with the plugin — see AgeWallet → Usage Guide, CSS Guide, and Developer Hooks in your WordPress admin.
 
@@ -55,21 +55,21 @@ The plugin's core purpose is to verify a visitor's age through the AgeWallet™ 
 
 = Google Analytics 4 and Google Tag Manager (optional) =
 
-Only if you enter a GA4 Measurement ID or a Google Tag Manager Container ID on the Strict Mode Analytics tab, and only while High Security (Strict) mode is active, the plugin outputs Google's official analytics snippet into the strict-mode loading screen (where your theme's own tags cannot run). The plugin sends no data itself; the snippet is Google's standard tag, executed in the visitor's browser using the ID you supply.
+Only if you enter a GA4 Measurement ID or a Google Tag Manager Container ID in the Strict Mode Analytics section of the Strict Mode Settings page, and only while High Security (Strict) mode is active, the plugin outputs Google's official analytics snippet into the strict-mode loading screen (where your theme's own tags cannot run). The plugin sends no data itself; the snippet is Google's standard tag, executed in the visitor's browser using the ID you supply.
 
 * Loaded from: `https://www.googletagmanager.com`.
 * This service is provided by Google. Terms of Service: https://policies.google.com/terms — Privacy Policy: https://policies.google.com/privacy
 
 = Facebook (Meta) Pixel (optional) =
 
-Only if you enter a Facebook Pixel ID on the Strict Mode Analytics tab, and only while High Security (Strict) mode is active, the plugin outputs Meta's official Pixel snippet into the strict-mode loading screen using the ID you supply. The plugin sends no data itself.
+Only if you enter a Facebook Pixel ID in the Strict Mode Analytics section of the Strict Mode Settings page, and only while High Security (Strict) mode is active, the plugin outputs Meta's official Pixel snippet into the strict-mode loading screen using the ID you supply. The plugin sends no data itself.
 
 * Loaded from: `https://connect.facebook.net` (with a `https://www.facebook.com` no-script fallback image).
 * This service is provided by Meta Platforms, Inc. Terms of Service: https://www.facebook.com/legal/terms — Privacy Policy: https://www.facebook.com/privacy/policy/
 
 == Installation ==
 
-1. Upload the plugin files to the `/wp-content/plugins/agewallet` directory, or install the plugin through the WordPress plugins screen directly by uploading the `.zip` file.
+1. Upload the plugin files to the `/wp-content/plugins/agewallet-oidc-client` directory, or install the plugin through the WordPress plugins screen directly by uploading the `.zip` file.
 2. Activate the plugin through the 'Plugins' screen in WordPress.
 3. Crucial Step: Go to Settings > Permalinks and simply click "Save Changes". This ensures the custom AgeWallet verification URLs (e.g., `/agewallet/callback/`) are registered.
 4. Look for the AgeWallet item in your main WordPress admin menu to launch the setup wizard.
@@ -126,7 +126,7 @@ Deleting the plugin from the Plugins screen runs `uninstall.php`, which removes 
     * Age-restricted products can't be bought until the shopper verifies: their add-to-cart area (express payment buttons included) is replaced by a Verify my age button, and WooCommerce refuses to add them to any cart until then.
     * Per-product regulated controls: Not Regulated / Regulated / Override.
     * Per-category and per-tag regulated flagging on the term-edit screens (products inherit from any of their categories or tags).
-    * Cart-context metadata (cart hash, total, currency, line-item count, billing country) automatically attached to verifications. In Conditional-on-Cart mode, a cart_triggers audit trail captures which products / categories / tags fired the gate.
+    * Cart-context metadata (cart hash, total, currency, line-item count, billing country) attached to verifications that start from the checkout page. In Conditional-on-Cart mode, these verifications also carry a cart_triggers audit trail that captures which products / categories / tags fired the gate.
 * Metadata pass-through: attach an opaque per-verification string (up to 4 KB) — static text or auto-composed JSON of selected request-context fields — that round-trips through the OIDC flow and surfaces on the `/userinfo` response.
 
 == Screenshots ==
@@ -146,9 +146,13 @@ This plugin is licensed under the GNU General Public License v2.0 or later. A co
 * Security: WooCommerce age-restricted products can no longer be bought before age verification, by any route. Until the shopper verifies, a regulated product can't be added to the cart (WooCommerce's own purchasability rule, including the cart API and payment plugins' express buttons), and its add-to-cart area, express payment buttons included, is replaced by a Verify my age button. Checkout validation and a backstop for payment plugins that build orders themselves also refuse unverified regulated orders.
 * Change: in Force Always mode, shoppers now verify before they can buy any product, not only at checkout.
 * Change: WooCommerce pages (shop, products, product categories and tags, cart, checkout, account, and pages with WooCommerce product blocks or shortcodes) always use Standard mode, so shoppers' carts and WooCommerce messages work as normal.
-* Note: clear your page cache once after updating, so cached product pages pick up the new add-to-cart area.
+* Change: When age-restricted items are removed from a shopper's cart because the shopper hasn't verified, the cart page (or the checkout page) now lists them, each with a link to its product page, where the shopper can verify and add it again.
+* Fix: The "Age verification required before you can place this order." message no longer appears on pages other than checkout, such as My Account.
+* Note: clear your page cache once after updating, so cached product pages pick up the new add-to-cart area and cached gated pages get the age gate.
 * Security: The Strict-mode content endpoint now only fetches this site's own pages, so the internal loopback request cannot be pointed at another host.
 * Security: Removed an obsolete verification-callback code path in the OIDC handler.
+* Security: In Standard mode, every visitor now gets the same gated page, including `[agewallet_protected]` blocks, and the browser reveals the content once the visitor is verified. A page cache can no longer store a copy made for a verified visitor and serve it to everyone without the age gate.
+* Fix: A visitor whose verification the site no longer accepts (more than 24 hours old, or made before the site's signing key changed) is now asked to verify again. In Strict mode the age gate shows instead of a "Verifying your age..." screen that never finished; on WooCommerce pages the site clears the refused cookie, so the Verify my age button shows again.
 
 = 1.5.7 =
 * Docs: Documentation improvements.
@@ -223,7 +227,7 @@ This plugin is licensed under the GNU General Public License v2.0 or later. A co
 == Upgrade Notice ==
 
 = 1.5.8 =
-Security release: age-restricted WooCommerce products can no longer be bought before age verification, including through block checkout and express payment buttons. Clear your page cache once after updating. Recommended for all WooCommerce users.
+Security release: age-restricted WooCommerce products can no longer be bought before age verification, including through block checkout and express payment buttons. Page caches no longer serve gated pages without the age gate. Clear your page cache once after updating. Recommended for all users.
 
 = 1.5.7 =
 Documentation improvements.
