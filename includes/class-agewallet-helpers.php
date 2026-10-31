@@ -21,6 +21,13 @@
         private static $instance = null;
 
         /**
+         * Result of has_valid_verified_cookie() for this request, or null before the first check.
+        * @since 1.6.0
+        * @var   bool|null
+        */
+        private $verified_cookie_valid = null;
+
+        /**
          * Ensures only one instance of the helper class is loaded.
         * @since  0.1.0
         * @static
@@ -356,6 +363,38 @@
             }
 
             return true;
+        }
+
+        /**
+         * True when the current request carries a valid (signed, unexpired) verification cookie
+         * (verify_signed_cookie()). Checked once per request.
+         *
+         * @since 1.6.0
+         * @return bool
+         */
+        public function has_valid_verified_cookie() {
+            if ( null === $this->verified_cookie_valid ) {
+                $cookie_name = defined( 'AgeWallet_Gating_Manager::VERIFIED_COOKIE_NAME' )
+                    ? AgeWallet_Gating_Manager::VERIFIED_COOKIE_NAME
+                    : 'agewallet_verified';
+
+                $this->verified_cookie_valid = isset( $_COOKIE[ $cookie_name ] )
+                    && $this->verify_signed_cookie( sanitize_text_field( wp_unslash( $_COOKIE[ $cookie_name ] ) ) );
+            }
+            return $this->verified_cookie_valid;
+        }
+
+        /**
+         * True when the current visitor counts as age-verified: has_valid_verified_cookie(), passed
+         * through the agewallet_visitor_is_verified filter. Used by the WooCommerce purchase check
+         * and the cart and checkout (AgeWallet_WooCommerce::visitor_is_verified()), and by the
+         * Strict mode content route (AgeWallet_API).
+         *
+         * @since 1.6.0
+         * @return bool
+         */
+        public function visitor_is_verified() {
+            return (bool) apply_filters( 'agewallet_visitor_is_verified', $this->has_valid_verified_cookie() );
         }
 
         /**

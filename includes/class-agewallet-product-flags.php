@@ -82,8 +82,8 @@ if ( ! class_exists( 'AgeWallet_Product_Flags' ) ) {
 
 			$options = array(
 				'not_regulated'          => array(
-					'label' => __( 'Not regulated', 'agewallet-oidc-client' ),
-					'desc'  => __( 'This product does not require age verification to buy.', 'agewallet-oidc-client' ),
+					'label' => __( 'Use categories and tags', 'agewallet-oidc-client' ),
+					'desc'  => __( 'Shoppers must verify their age to buy this product only when one of its categories or tags is marked Regulated.', 'agewallet-oidc-client' ),
 				),
 				'regulated'              => array(
 					'label' => __( 'Regulated', 'agewallet-oidc-client' ),

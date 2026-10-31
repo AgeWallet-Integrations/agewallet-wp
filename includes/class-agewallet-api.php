@@ -244,31 +244,22 @@ class AgeWallet_API {
 	}
 
 	/**
-	 * Securely checks if the user has the verification cookie.
-	 * Uses HMAC signature verification via Helper.
+	 * Securely checks if the user is verified.
+	 * With a verification cookie, the agewallet_is_user_verified filter runs first; otherwise the
+	 * shared check (AgeWallet_Helpers::visitor_is_verified(): HMAC signature verification and the
+	 * agewallet_visitor_is_verified filter) decides.
 	 */
 	private function is_user_verified() {
 		$cookie_name = defined( 'AgeWallet_Gating_Manager::VERIFIED_COOKIE_NAME' )
 			? AgeWallet_Gating_Manager::VERIFIED_COOKIE_NAME
 			: 'agewallet_verified';
 
-		if ( ! isset( $_COOKIE[ $cookie_name ] ) ) {
-			return false;
-		}
-
 		// Check standard override hook first
-		if ( apply_filters( 'agewallet_is_user_verified', false ) ) {
+		if ( isset( $_COOKIE[ $cookie_name ] ) && apply_filters( 'agewallet_is_user_verified', false ) ) {
 			return true;
 		}
 
-		// Perform Cryptographic Verification
-		if ( class_exists( 'AgeWallet_Helpers' ) ) {
-			return AgeWallet_Helpers::instance()->verify_signed_cookie(
-				sanitize_text_field( wp_unslash( $_COOKIE[ $cookie_name ] ) )
-			);
-		}
-
-		return false;
+		return class_exists( 'AgeWallet_Helpers' ) && AgeWallet_Helpers::instance()->visitor_is_verified();
 	}
 
 	/**

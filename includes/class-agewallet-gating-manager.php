@@ -552,48 +552,6 @@ class AgeWallet_Gating_Manager {
 			}
 		}
 
-		// 4a. WooCommerce checkout — additive override. Gates the checkout
-		// regardless of block_mode/paths/taxonomy, in one of two modes:
-		//   - force-always:        every checkout gates (current binary behavior)
-		//   - conditional-on-cart: gates only when an unverified visitor's cart
-		//                          contains at least one item flagged as regulated
-		if (
-			class_exists( 'WooCommerce' )
-			&& class_exists( 'AgeWallet_WooCommerce' )
-			&& is_null( $context_post_id ) // API/post-context callers skip this; this is a request-level rule.
-			&& AgeWallet_WooCommerce::is_checkout_request()
-		) {
-			$mode = AgeWallet_WooCommerce::checkout_gating_mode();
-
-			if ( AgeWalletOIDCClientPro::WC_GATE_MODE_FORCE_ALWAYS === $mode ) {
-				$this->log_debug( 'Rule Check: WC checkout force-always enabled and request is checkout.' );
-				return apply_filters( 'agewallet_should_gate_request', true, $post_id );
-			}
-
-			if ( AgeWalletOIDCClientPro::WC_GATE_MODE_CONDITIONAL_CART === $mode ) {
-				// Short-circuit: already-verified visitors don't need cart inspection
-				// (and we don't want to pay for the per-item meta reads on every page hit).
-				$is_verified = false;
-				if ( isset( $_COOKIE[ self::VERIFIED_COOKIE_NAME ] ) && class_exists( 'AgeWallet_Helpers' ) ) {
-					$is_verified = AgeWallet_Helpers::instance()->verify_signed_cookie(
-						sanitize_text_field( wp_unslash( $_COOKIE[ self::VERIFIED_COOKIE_NAME ] ) )
-					);
-				}
-				if ( $is_verified ) {
-					$this->log_debug( 'Rule Check: WC checkout conditional-on-cart, visitor already verified — skipping cart inspection.' );
-					return false;
-				}
-				if ( AgeWallet_WooCommerce::cart_contains_regulated_items() ) {
-					$this->log_debug( 'Rule Check: WC checkout conditional-on-cart, cart contains regulated items — gating.' );
-					return apply_filters( 'agewallet_should_gate_request', true, $post_id );
-				}
-				$this->log_debug( 'Rule Check: WC checkout conditional-on-cart, no regulated items in cart — not gating.' );
-				return false;
-			}
-
-			// WC_GATE_MODE_OFF — fall through to general block_mode logic below.
-		}
-
 		// 4. Check Global Settings.
 		$global_block_mode      = get_option( AgeWalletOIDCClientPro::OPT_BLOCK_MODE, 'none' );
 		$global_requires_gating = false;
@@ -843,9 +801,12 @@ class AgeWallet_Gating_Manager {
 	 * WordPress has the page's context, so it carries the same values wherever the button is.
 	 *
 	 * @param string $return_url Where the visitor comes back to after verifying.
+	 * @param string $origin     The origin marker: 'checkout' or 'cart' makes handle_launch() add the
+	 *                           WooCommerce cart details to the metadata. '' marks 'checkout' on the
+	 *                           checkout page and nothing elsewhere.
 	 * @return string The launch URL, or '' if it can't be determined.
 	 */
-	public static function get_verify_url( $return_url ) {
+	public static function get_verify_url( $return_url, $origin = '' ) {
 		$launch_url = AgeWallet_Helpers::instance()->get_launch_url();
 		if ( ! $launch_url ) {
 			return '';
@@ -860,11 +821,14 @@ class AgeWallet_Gating_Manager {
 			}
 		}
 
-		// Mark checkout-origin so handle_launch() knows to attach WC cart-context metadata at
-		// click-time. The marker rides as a separate signed query param so it stays out of the
+		// Mark cart or checkout origin so handle_launch() knows to attach WC cart-context metadata
+		// at click-time. The marker rides as a separate signed query param so it stays out of the
 		// final metadata payload stored against the verification.
-		if ( class_exists( 'AgeWallet_WooCommerce' ) && AgeWallet_WooCommerce::is_checkout_request() ) {
-			$url = add_query_arg( 'agewallet_origin', urlencode( AgeWallet_Helpers::instance()->sign_metadata( 'checkout' ) ), $url );
+		if ( '' === $origin && class_exists( 'AgeWallet_WooCommerce' ) && AgeWallet_WooCommerce::is_checkout_request() ) {
+			$origin = 'checkout';
+		}
+		if ( '' !== $origin ) {
+			$url = add_query_arg( 'agewallet_origin', urlencode( AgeWallet_Helpers::instance()->sign_metadata( $origin ) ), $url );
 		}
 
 		return $url;

@@ -57,7 +57,7 @@ Checkout Metadata Fields: pick which cart-context values get attached to each ve
 
 Per-Product Regulated Status: open any product in WooCommerce > Products > Edit Product > AgeWallet tab.
 
-* Not regulated (default): follows the product's categories and tags.
+* Use categories and tags (default): follows the product's categories and tags.
 * Regulated: shoppers must verify their age before they can buy this product (Conditional on Cart).
 * Override — explicitly not regulated: lets this product be bought without verifying even when one of its categories or tags is flagged regulated. Useful for an edge product inside an otherwise-regulated category.
 
