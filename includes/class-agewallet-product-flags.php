@@ -1,16 +1,18 @@
 <?php
 /**
- * Admin UI for the regulated-status flags that decide which WC products need age verification to buy
- * conditional-on-cart mode.
+ * Admin UI for the per-product Age verification choice and the category and tag flag that decide
+ * which WC products need age verification to view or to buy.
  *
  * Adds:
- *  - A "AgeWallet" tab to the WC product data metabox with a 3-state radio
- *    (not regulated / regulated / override).
- *  - A checkbox to the product category + product tag edit screens to mark
- *    whole taxonomy terms as regulated.
+ *  - An "AgeWallet" tab to the WC product data metabox with the Age verification radios
+ *    (follow store rules / view and buy / buy only / never, plus Custom for saved values that
+ *    match none of them) and a hint saying what the product does now.
+ *  - A checkbox to the product category + product tag edit screens to mark whole taxonomy
+ *    terms as needing verification to buy.
  *
  * Reads/writes go through the meta keys defined on AgeWallet_WooCommerce
- * (META_KEY_PRODUCT_REGULATED_STATUS and META_KEY_TERM_REGULATED).
+ * (META_KEY_PRODUCT_REGULATED_STATUS and META_KEY_TERM_REGULATED) and AgeWallet_Gating_Manager
+ * (META_KEY_FORCE_RESTRICT and META_KEY_FORCE_EXCLUDE).
  *
  * No-op on non-WC installs.
  *
@@ -25,6 +27,9 @@ if ( ! class_exists( 'AgeWallet_Product_Flags' ) ) {
 	final class AgeWallet_Product_Flags {
 
 		private static $instance = null;
+
+		/** The product edit form's field for the Age verification choice. */
+		const FIELD_AGE_VERIFICATION = 'agewallet_age_verification';
 
 		public static function instance() {
 			if ( is_null( self::$instance ) ) {
@@ -71,72 +76,221 @@ if ( ! class_exists( 'AgeWallet_Product_Flags' ) ) {
 		}
 
 		/**
-		 * WC product-data-panel action: render the regulated-status radio panel.
+		 * The four Age verification choices, in the order shown, each with the values it saves:
+		 * the product's regulated status, and the page's force-restrict and force-exclude flags.
+		 *
+		 * @return array<string, array{label: string, desc: string, status: string, restrict: bool, exclude: bool}>
+		 */
+		public static function choices() {
+			return array(
+				'follow'       => array(
+					'label'    => __( 'Follow store rules', 'agewallet-oidc-client' ),
+					'desc'     => __( 'Viewing follows your Content Guarding rules. Buying follows your Checkout gating rule, including this product\'s categories and tags.', 'agewallet-oidc-client' ),
+					'status'   => 'not_regulated',
+					'restrict' => false,
+					'exclude'  => false,
+				),
+				'view_and_buy' => array(
+					'label'    => __( 'Require verification to view and buy', 'agewallet-oidc-client' ),
+					'desc'     => __( 'The product page is gated, and shoppers must verify their age before buying.', 'agewallet-oidc-client' ),
+					'status'   => 'regulated',
+					'restrict' => true,
+					'exclude'  => false,
+				),
+				'buy_only'     => array(
+					'label'    => __( 'Require verification to buy only', 'agewallet-oidc-client' ),
+					'desc'     => __( 'The page stays open. Shoppers must verify their age before buying.', 'agewallet-oidc-client' ),
+					'status'   => 'regulated',
+					'restrict' => false,
+					'exclude'  => false,
+				),
+				'never'        => array(
+					'label'    => __( 'Never require verification', 'agewallet-oidc-client' ),
+					'desc'     => __( 'The page is open and shoppers can buy without verifying, whatever your rules say.', 'agewallet-oidc-client' ),
+					'status'   => 'override_not_regulated',
+					'restrict' => false,
+					'exclude'  => true,
+				),
+			);
+		}
+
+		/**
+		 * The choice a product's saved values amount to: a key of choices(), or 'custom' when the
+		 * saved regulated status, force-restrict and force-exclude flags match none of them.
+		 *
+		 * @param int $post_id
+		 * @return string
+		 */
+		public static function choice_for_product( $post_id ) {
+			$saved = self::saved_values( $post_id );
+			foreach ( self::choices() as $key => $choice ) {
+				if ( $choice['status'] === $saved['status'] && $choice['restrict'] === $saved['restrict'] && $choice['exclude'] === $saved['exclude'] ) {
+					return $key;
+				}
+			}
+			return 'custom';
+		}
+
+		/**
+		 * A product's saved values: its regulated status ('not_regulated' when nothing is saved)
+		 * and whether the page's force-restrict and force-exclude flags are on.
+		 *
+		 * @param int $post_id
+		 * @return array{status: string, restrict: bool, exclude: bool}
+		 */
+		private static function saved_values( $post_id ) {
+			return array(
+				'status'   => AgeWallet_WooCommerce::product_regulated_status( (int) $post_id ),
+				'restrict' => '1' === get_post_meta( $post_id, AgeWallet_Gating_Manager::META_KEY_FORCE_RESTRICT, true ),
+				'exclude'  => '1' === get_post_meta( $post_id, AgeWallet_Gating_Manager::META_KEY_FORCE_EXCLUDE, true ),
+			);
+		}
+
+		/**
+		 * The Custom choice's description: the saved values named, for a product whose values
+		 * match no choice.
+		 *
+		 * @param int $post_id
+		 * @return string
+		 */
+		private static function custom_description( $post_id ) {
+			$saved = self::saved_values( $post_id );
+			if ( $saved['restrict'] && $saved['exclude'] ) {
+				$page = __( 'Require age verification and Exclude from age verification both on', 'agewallet-oidc-client' );
+			} elseif ( $saved['restrict'] ) {
+				$page = __( 'Require age verification on', 'agewallet-oidc-client' );
+			} elseif ( $saved['exclude'] ) {
+				$page = __( 'Exclude from age verification on', 'agewallet-oidc-client' );
+			} else {
+				$page = __( 'no page setting', 'agewallet-oidc-client' );
+			}
+			if ( 'regulated' === $saved['status'] ) {
+				$buying = __( 'shoppers verify to buy', 'agewallet-oidc-client' );
+			} elseif ( 'override_not_regulated' === $saved['status'] ) {
+				$buying = __( 'shoppers never verify to buy', 'agewallet-oidc-client' );
+			} else {
+				$buying = __( 'buying inherits categories and tags', 'agewallet-oidc-client' );
+			}
+			/* translators: 1: the page setting, 2: the buying setting */
+			return sprintf( __( 'Saved settings: %1$s; %2$s. Pick a choice above to replace them.', 'agewallet-oidc-client' ), $page, $buying );
+		}
+
+		/**
+		 * The hint's two lines for a product: whether its page is gated by the page protection
+		 * rules (AgeWallet_Gating_Manager::should_restrict_content() for the product), and whether
+		 * shoppers verify before buying it (AgeWallet_WooCommerce::product_requires_verification()
+		 * and the Checkout gating rule).
+		 *
+		 * @param int $post_id
+		 * @return string[]
+		 */
+		private static function hint_lines( $post_id ) {
+			$gated = class_exists( 'AgeWallet_Gating_Manager' ) && AgeWallet_Gating_Manager::instance()->should_restrict_content( (int) $post_id, false );
+			$lines = array(
+				$gated
+					? __( 'This page is gated by your Content Guarding rules.', 'agewallet-oidc-client' )
+					: __( 'This page is open.', 'agewallet-oidc-client' ),
+			);
+			if ( ! AgeWallet_WooCommerce::checkout_gating_enabled() ) {
+				$lines[] = __( 'Checkout gating is off, so shoppers don\'t verify to buy.', 'agewallet-oidc-client' );
+			} elseif ( function_exists( 'wc_get_product' ) && AgeWallet_WooCommerce::product_requires_verification( wc_get_product( $post_id ) ) ) {
+				$lines[] = __( 'Shoppers verify before buying this product.', 'agewallet-oidc-client' );
+			} else {
+				$lines[] = __( 'Shoppers can buy this product without verifying.', 'agewallet-oidc-client' );
+			}
+			return $lines;
+		}
+
+		/**
+		 * WC product-data-panel action: render the Age verification radios and the hint.
 		 */
 		public function render_product_data_panel() {
 			global $post;
-			$status = $post ? get_post_meta( $post->ID, AgeWallet_WooCommerce::META_KEY_PRODUCT_REGULATED_STATUS, true ) : '';
-			if ( '' === $status ) {
-				$status = AgeWallet_WooCommerce::PRODUCT_REGULATED_STATUS_DEFAULT;
-			}
+			$post_id = $post ? (int) $post->ID : 0;
+			$current = $post_id ? self::choice_for_product( $post_id ) : 'follow';
 
-			$options = array(
-				'not_regulated'          => array(
-					'label' => __( 'Use categories and tags', 'agewallet-oidc-client' ),
-					'desc'  => __( 'Shoppers must verify their age to buy this product only when one of its categories or tags is marked Regulated.', 'agewallet-oidc-client' ),
-				),
-				'regulated'              => array(
-					'label' => __( 'Regulated', 'agewallet-oidc-client' ),
-					'desc'  => __( 'When checkout gating is set to "Conditional on cart", shoppers must verify their age before they can buy this product. Until they do, its add-to-cart area, express payment buttons included, is replaced by a Verify my age button.', 'agewallet-oidc-client' ),
-				),
-				'override_not_regulated' => array(
-					'label' => __( 'Override — explicitly not regulated', 'agewallet-oidc-client' ),
-					'desc'  => __( 'Forces this product to be treated as unregulated even if one of its categories or tags is flagged as regulated. Only useful for edge cases where an otherwise-regulated category contains a specific product that should not trigger the gate.', 'agewallet-oidc-client' ),
-				),
-			);
+			$options = array();
+			foreach ( self::choices() as $key => $choice ) {
+				$options[ $key ] = array( 'label' => $choice['label'], 'desc' => $choice['desc'] );
+			}
+			if ( 'custom' === $current ) {
+				$options['custom'] = array(
+					'label' => __( 'Custom', 'agewallet-oidc-client' ),
+					'desc'  => self::custom_description( $post_id ),
+				);
+			}
+			$hint = $post_id ? self::hint_lines( $post_id ) : array();
 			?>
 			<div id="agewallet_product_data" class="panel woocommerce_options_panel hidden">
 				<div class="options_group">
 					<p class="form-field">
-						<label><?php esc_html_e( 'Regulated status', 'agewallet-oidc-client' ); ?></label>
+						<label><?php esc_html_e( 'Age verification', 'agewallet-oidc-client' ); ?></label>
 						<span class="description" style="display:block; margin-left:0;">
-							<?php esc_html_e( 'Controls whether shoppers must verify their age before they can buy this product, when checkout gating is set to "Conditional on cart".', 'agewallet-oidc-client' ); ?>
-							<?php esc_html_e( 'This controls buying only. Who can view the product\'s page is set in the Age Restriction box in the sidebar.', 'agewallet-oidc-client' ); ?>
+							<?php esc_html_e( 'Who can view this product\'s page, and who can buy it.', 'agewallet-oidc-client' ); ?>
 						</span>
 					</p>
 					<?php foreach ( $options as $value => $entry ) : ?>
 						<p class="form-field" style="margin-left:160px;">
 							<label style="display:block;">
-								<input type="radio" name="<?php echo esc_attr( AgeWallet_WooCommerce::META_KEY_PRODUCT_REGULATED_STATUS ); ?>" value="<?php echo esc_attr( $value ); ?>" <?php checked( $value, $status ); ?> />
+								<input type="radio" name="<?php echo esc_attr( self::FIELD_AGE_VERIFICATION ); ?>" value="<?php echo esc_attr( $value ); ?>" <?php checked( $value, $current ); ?> />
 								<strong><?php echo esc_html( $entry['label'] ); ?></strong>
 								<br>
 								<span class="description" style="margin-left:24px;"><?php echo esc_html( $entry['desc'] ); ?></span>
 							</label>
 						</p>
 					<?php endforeach; ?>
+					<?php if ( $hint ) : ?>
+						<p class="form-field agewallet-age-verification-hint" style="margin-left:160px;">
+							<span class="description" style="margin-left:0;"><?php echo esc_html( implode( ' ', $hint ) ); ?></span>
+						</p>
+					<?php endif; ?>
 				</div>
 			</div>
 			<?php
 		}
 
 		/**
-		 * WC product save action: persist the regulated-status meta.
+		 * WC product save action: persist the Age verification choice as the product's regulated
+		 * status and the page's force-restrict and force-exclude flags. Custom leaves the saved
+		 * values as they are.
 		 * WC has already verified the standard post-edit nonce + capability before this fires.
 		 */
 		public function save_product_meta( $post_id ) {
-			$key = AgeWallet_WooCommerce::META_KEY_PRODUCT_REGULATED_STATUS;
-			// Hooks into WooCommerce's woocommerce_admin_process_product_object, which fires inside
+			// Hooks into WooCommerce's woocommerce_process_product_meta, which fires inside
 			// the core product-save flow after WC has already verified the standard product-edit
 			// nonce and the user's edit_product capability. No separate nonce required here.
 			// phpcs:ignore WordPress.Security.NonceVerification.Missing
-			if ( ! isset( $_POST[ $key ] ) ) {
+			if ( ! isset( $_POST[ self::FIELD_AGE_VERIFICATION ] ) ) {
 				return;
 			}
 			// phpcs:ignore WordPress.Security.NonceVerification.Missing
-			$input   = sanitize_text_field( wp_unslash( $_POST[ $key ] ) );
-			$allowed = array( 'not_regulated', 'regulated', 'override_not_regulated' );
-			$value   = in_array( $input, $allowed, true ) ? $input : 'not_regulated';
-			update_post_meta( $post_id, $key, $value );
+			$input   = sanitize_key( wp_unslash( $_POST[ self::FIELD_AGE_VERIFICATION ] ) );
+			$choices = self::choices();
+			if ( ! isset( $choices[ $input ] ) ) {
+				return;
+			}
+			$choice = $choices[ $input ];
+			update_post_meta( $post_id, AgeWallet_WooCommerce::META_KEY_PRODUCT_REGULATED_STATUS, $choice['status'] );
+			if ( $choice['restrict'] ) {
+				update_post_meta( $post_id, AgeWallet_Gating_Manager::META_KEY_FORCE_RESTRICT, '1' );
+			} else {
+				delete_post_meta( $post_id, AgeWallet_Gating_Manager::META_KEY_FORCE_RESTRICT );
+			}
+			if ( $choice['exclude'] ) {
+				update_post_meta( $post_id, AgeWallet_Gating_Manager::META_KEY_FORCE_EXCLUDE, '1' );
+			} else {
+				delete_post_meta( $post_id, AgeWallet_Gating_Manager::META_KEY_FORCE_EXCLUDE );
+			}
+		}
+
+		/** The category and tag checkbox's label. */
+		private static function term_label() {
+			return __( 'Require age verification to buy (AgeWallet)', 'agewallet-oidc-client' );
+		}
+
+		/** The category and tag checkbox's description. */
+		private static function term_description() {
+			return __( 'Shoppers must verify their age before buying any product with this category or tag, when Checkout gating is set to Only the products you flag. A product\'s own Age verification choice overrides this. Clear your page cache after changing it.', 'agewallet-oidc-client' );
 		}
 
 		/**
@@ -147,9 +301,9 @@ if ( ! class_exists( 'AgeWallet_Product_Flags' ) ) {
 			<div class="form-field">
 				<label for="agewallet_regulated">
 					<input type="checkbox" name="<?php echo esc_attr( AgeWallet_WooCommerce::META_KEY_TERM_REGULATED ); ?>" id="agewallet_regulated" value="1" />
-					<?php esc_html_e( 'Regulated: shoppers must verify their age to buy (AgeWallet)', 'agewallet-oidc-client' ); ?>
+					<?php echo esc_html( self::term_label() ); ?>
 				</label>
-				<p><?php esc_html_e( 'When AgeWallet\'s checkout gating is set to "Conditional on cart", shoppers must verify their age before they can buy any product in this term. Clear your page cache after changing this, so product pages pick it up.', 'agewallet-oidc-client' ); ?></p>
+				<p><?php echo esc_html( self::term_description() ); ?></p>
 			</div>
 			<?php
 		}
@@ -163,12 +317,12 @@ if ( ! class_exists( 'AgeWallet_Product_Flags' ) ) {
 			<tr class="form-field">
 				<th scope="row" valign="top">
 					<label for="agewallet_regulated">
-						<?php esc_html_e( 'Regulated: shoppers must verify their age to buy (AgeWallet)', 'agewallet-oidc-client' ); ?>
+						<?php echo esc_html( self::term_label() ); ?>
 					</label>
 				</th>
 				<td>
 					<input type="checkbox" name="<?php echo esc_attr( AgeWallet_WooCommerce::META_KEY_TERM_REGULATED ); ?>" id="agewallet_regulated" value="1" <?php checked( '1', $checked ); ?> />
-					<p class="description"><?php esc_html_e( 'When AgeWallet\'s checkout gating is set to "Conditional on cart", shoppers must verify their age before they can buy any product in this term. Clear your page cache after changing this, so product pages pick it up.', 'agewallet-oidc-client' ); ?></p>
+					<p class="description"><?php echo esc_html( self::term_description() ); ?></p>
 				</td>
 			</tr>
 			<?php

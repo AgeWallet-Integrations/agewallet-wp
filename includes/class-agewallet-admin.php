@@ -560,8 +560,9 @@ class AgeWallet_Admin {
 	}
 
 	public function render_wc_section_description() {
-		echo '<p>' . esc_html__( 'Choose which products shoppers must verify their age to buy. Until they verify, those products can\'t be added to the cart, and their add-to-cart area, express payment buttons included, is replaced by a Verify my age button. Per-checkout context (cart hash, total, etc.) is attached as metadata to verifications that start from the checkout page.', 'agewallet-oidc-client' ) . '</p>';
-		echo '<p class="description">' . esc_html__( 'Use the `agewallet_wc_checkout_metadata` filter to fully customise the metadata payload from code.', 'agewallet-oidc-client' ) . '</p>';
+		echo '<p>' . esc_html__( 'Choose which products shoppers must verify their age to buy. Shoppers browse and add to the cart as usual; the cart and checkout pages ask them to verify, and an order placed without verifying is refused. Per-checkout context (cart hash, total, etc.) is attached as metadata to verifications that start from the cart or checkout page.', 'agewallet-oidc-client' ) . '</p>';
+		echo '<p><strong>' . esc_html__( 'Express checkout.', 'agewallet-oidc-client' ) . '</strong> ' . esc_html__( 'AgeWallet hides the express checkout buttons that payment plugins place in WooCommerce\'s cart page checkout area, the classic mini-cart, the classic checkout (above the customer details and in the payment area) and the Cart and Checkout blocks\' express payment area until the shopper has verified, and it refuses any order an unverified shopper places through WooCommerce\'s checkout, the classic form or the Store API. Tested with WooPayments 11.2.0, WooCommerce Stripe 11.1.1 and WooCommerce PayPal Payments 4.2.0. Express buttons on product pages are not hidden: turn that location off in your payment plugin\'s settings. Anything else is not supported.', 'agewallet-oidc-client' ) . '</p>';
+		echo '<p class="description">' . esc_html__( 'The shopper\'s journey and the product settings are described in the Usage Guide (AgeWallet → Usage Guide). Use the `agewallet_wc_checkout_metadata` filter to fully customise the metadata payload from code.', 'agewallet-oidc-client' ) . '</p>';
 	}
 
 	public function render_wc_metadata_fields_ui() {
@@ -703,16 +704,16 @@ class AgeWallet_Admin {
 
 		$modes = array(
 			AgeWalletOIDCClientPro::WC_GATE_MODE_OFF              => array(
-				'label' => __( 'Off — no purchase rule', 'agewallet-oidc-client' ),
-				'desc'  => __( 'Products can be bought without verifying. Your page protection rules (scope, paths, taxonomies) still apply as normal.', 'agewallet-oidc-client' ),
-			),
-			AgeWalletOIDCClientPro::WC_GATE_MODE_FORCE_ALWAYS     => array(
-				'label' => __( 'Force always — verify before buying any product', 'agewallet-oidc-client' ),
-				'desc'  => __( 'Shoppers must verify their age before they can buy any product, and every visit to the checkout page requires verification.', 'agewallet-oidc-client' ),
+				'label' => __( 'None', 'agewallet-oidc-client' ),
+				'desc'  => __( 'No product needs age verification to buy, whatever its Age verification choice says. Your Content Guarding rules still decide who can view each page.', 'agewallet-oidc-client' ),
 			),
 			AgeWalletOIDCClientPro::WC_GATE_MODE_CONDITIONAL_CART => array(
-				'label' => __( 'Conditional on cart — verify before buying regulated products', 'agewallet-oidc-client' ),
-				'desc'  => __( 'Flag products, categories, or tags as regulated (see Products → individual product or Products → Categories/Tags). Shoppers must verify their age before they can buy a regulated product: until they do, its add-to-cart area, express payment buttons included, is replaced by a Verify my age button.', 'agewallet-oidc-client' ),
+				'label' => __( 'Only the products you flag', 'agewallet-oidc-client' ),
+				'desc'  => __( 'Shoppers must verify their age before buying a product set to require verification (the AgeWallet tab on the product), or one in a category or tag marked Require age verification to buy. The cart and checkout ask them to verify when the cart holds one.', 'agewallet-oidc-client' ),
+			),
+			AgeWalletOIDCClientPro::WC_GATE_MODE_FORCE_ALWAYS     => array(
+				'label' => __( 'All products except those you exempt', 'agewallet-oidc-client' ),
+				'desc'  => __( 'Shoppers must verify their age before buying any product, except products set to Never require verification (the AgeWallet tab on the product).', 'agewallet-oidc-client' ),
 			),
 		);
 
@@ -1170,8 +1171,10 @@ class AgeWallet_Admin {
 		$content = preg_replace( '/^=\s*(.*?)\s*=/m', '<h3>$1</h3>', $content );
 		$content = preg_replace( '/^>(.*)/m', '<blockquote>$1</blockquote>', $content );
 		$content = str_replace( "</blockquote>\n<blockquote>", "\n", $content );
-		$content = preg_replace_callback( '/(^\*\s*.*(?:\n^\*\s*.*)*)/m', function( $matches ) {
-			$items = preg_replace( '/^\*\s*(.*)/m', '<li>$1</li>', $matches[0] );
+		// Bullet items: lines that start with an asterisk and a space. A line that starts with
+		// bold text (**...**) is a paragraph.
+		$content = preg_replace_callback( '/(^\* .*(?:\n^\* .*)*)/m', function( $matches ) {
+			$items = preg_replace( '/^\* (.*)/m', '<li>$1</li>', $matches[0] );
 			return "<ul>\n" . $items . "\n</ul>\n";
 		}, $content );
 		$content = preg_replace_callback( '/(^(\d+\.)\s*.*(?:\n^\d+\.\s*.*)*)/m', function( $matches ) {

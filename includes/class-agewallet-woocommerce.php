@@ -2,9 +2,11 @@
 /**
  * WooCommerce integration for the AgeWallet plugin.
  *
- * Adds the opt-in age-verification rule for buying products, the cart and checkout pages'
- * Verify my age message, and per-checkout metadata that round-trips through the AgeWallet
- * verification flow.
+ * Adds the opt-in age-verification rule for buying products: the cart and checkout pages'
+ * Verify my age message (with the express checkout buttons and Place order hidden until the
+ * shopper verifies), the server-side refusal of orders placed by unverified shoppers, the
+ * verification record on orders, the mask on listing cards of products whose page is gated,
+ * and per-checkout metadata that round-trips through the AgeWallet verification flow.
  *
  * Loaded only when WooCommerce is active (gated in agewallet-oidc-client.php bootstrap).
  *
@@ -21,26 +23,26 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		private static $instance = null;
 
 		/**
-		 * True while keep_cart_item() asks a product whether it can be bought without our rule.
-		 *
-		 * @var bool
-		 */
-		private static $skip_purchase_rule = false;
-
-		/**
-		 * The age-restricted product an add-to-cart link asked for in this request, when our rule
-		 * refused it (redirect_refused_add_to_cart_link()).
-		 *
-		 * @var WC_Product|null
-		 */
-		private static $refused_link_product = null;
-
-		/**
-		 * True between open_cart_actions() / open_checkout_actions() and close_order_actions().
+		 * True between open_checkout_actions() / open_mini_cart_actions() and close_order_actions().
 		 *
 		 * @var bool
 		 */
 		private static $order_actions_open = false;
+
+		/**
+		 * True while the request is POST /wc/store/v1/checkout (flag_store_api_checkout()).
+		 *
+		 * @var bool
+		 */
+		private static $store_api_checkout = false;
+
+		/**
+		 * Orders given a verification record before their first save (guard_unverified_order()),
+		 * keyed by spl_object_id(); the agewallet_wc_verified_order hook fires for them after the save.
+		 *
+		 * @var array<int, bool>
+		 */
+		private static $record_pending = array();
 
 		/**
 		 * Post meta key for per-product regulated status.
@@ -58,6 +60,24 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 * Default per-product regulated status when no post meta is set.
 		 */
 		const PRODUCT_REGULATED_STATUS_DEFAULT = 'not_regulated';
+
+		/**
+		 * Order meta key for the verification record: the UTC time (Y-m-d H:i:s) the order was
+		 * placed by a verified shopper. Absent on orders without a record.
+		 */
+		const META_KEY_ORDER_VERIFIED_AT = '_agewallet_verified_at';
+
+		/**
+		 * Order meta key set to '1' once monitor_order_status() has noted, logged and emailed that
+		 * the order has no verification record.
+		 */
+		const META_KEY_ORDER_NO_RECORD_NOTIFIED = '_agewallet_no_record_notified';
+
+		/**
+		 * The Store API checkout route that places an order: POST /wc/store/v1/checkout
+		 * (also /wc/store/checkout).
+		 */
+		const STORE_API_CHECKOUT_ROUTE = '#^/wc/store(?:/v\d+)?/checkout/?$#';
 
 		/**
 		 * The Cart and Checkout blocks' express payment area as WooCommerce draws it in the browser:
@@ -79,47 +99,62 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		private function __construct() {
 			add_filter( 'agewallet_metadata', array( $this, 'inject_checkout_metadata' ) );
 
-			// 1. Age-restricted products can't be bought until the visitor has verified. This is
-			//    WooCommerce's own purchasability rule, applied wherever a product goes into a cart
-			//    or an order (add to cart, checkout, the cart API, payment plugins' AJAX calls).
-			//    Those requests always carry the verification cookie, even on hosts whose page
-			//    cache strips it from ordinary page loads. Items already in the cart stay there.
-			add_filter( 'woocommerce_is_purchasable', array( $this, 'filter_purchasable' ), 20, 2 );
-			add_filter( 'woocommerce_variation_is_purchasable', array( $this, 'filter_purchasable' ), 20, 2 );
-			add_filter( 'woocommerce_cart_item_is_purchasable', array( $this, 'keep_cart_item' ), 20, 4 );
+			// The Age Restriction box leaves product edit screens: a product's viewing rule is part
+			// of its Age verification choice (AgeWallet_Product_Flags).
+			add_filter( 'agewallet_meta_box_post_types', array( $this, 'drop_product_meta_box' ) );
 
-			// 2. Product and listing pages are the same for every visitor, so they can be cached.
-			//    The product page's buy area (WooCommerce's add-to-cart template, where payment
-			//    plugins put their express buttons) and a listing's add-to-cart button (classic
-			//    loops and the Product Button block) are wrapped, and the browser shows them or a
-			//    Verify my age button, from the same cookie check the gate uses.
-			add_action( 'woocommerce_before_template_part', array( $this, 'open_buy_area' ), 1, 1 );
-			add_action( 'woocommerce_after_template_part', array( $this, 'close_buy_area' ), 999, 1 );
-			add_filter( 'woocommerce_loop_add_to_cart_link', array( $this, 'filter_loop_add_to_cart_link' ), 20, 2 );
+			// 1. Listing cards of products whose page is gated are masked (classic loops, the grid
+			//    blocks and the Product Collection block). Listings are the same for every visitor,
+			//    so they can be cached; the browser reveals the card from the verification cookie.
+			add_action( 'woocommerce_before_shop_loop_item', array( $this, 'open_listing_card' ), PHP_INT_MIN );
+			add_action( 'woocommerce_after_shop_loop_item', array( $this, 'close_listing_card' ), PHP_INT_MAX );
+			add_filter( 'woocommerce_blocks_product_grid_item_html', array( $this, 'mask_product_grid_item' ), 20, 3 );
+			add_filter( 'render_block_woocommerce/product-template', array( $this, 'mask_product_template_block' ), 20 );
 
-			// 3. WooCommerce's add-to-cart refusal says why, for age-restricted products only. A
-			//    refused add-to-cart link goes to the product's page.
-			add_filter( 'woocommerce_cart_product_cannot_be_purchased_message', array( $this, 'filter_cannot_be_purchased_message' ), 10, 2 );
-			add_action( 'wp_loaded', array( $this, 'redirect_refused_add_to_cart_link' ), 21 );
-
-			// 4. Cart and checkout pages, when the cart needs verification: a Verify my age message,
-			//    with Proceed to Checkout, Place order and the express checkout buttons hidden (the
-			//    Cart and Checkout blocks' areas for them, and WooCommerce's classic places for
-			//    them). These pages aren't page-cached, so the server decides.
-			add_action( 'woocommerce_proceed_to_checkout', array( $this, 'open_cart_actions' ), 1 );
-			add_action( 'woocommerce_proceed_to_checkout', array( $this, 'close_order_actions' ), 999 );
+			// 2. Cart, checkout and mini-cart, when the cart needs verification: the Verify my age
+			//    message, with the express checkout buttons hidden (and Place order on the checkout).
+			//    These aren't page-cached, so the server decides.
+			add_action( 'woocommerce_proceed_to_checkout', array( $this, 'print_cart_notice' ), 1 );
 			add_action( 'woocommerce_before_checkout_form', array( $this, 'print_checkout_notice' ), 1 );
+			add_action( 'woocommerce_checkout_before_customer_details', array( $this, 'open_checkout_actions' ), PHP_INT_MIN );
+			add_action( 'woocommerce_checkout_before_customer_details', array( $this, 'close_order_actions' ), 9 );
 			add_action( 'woocommerce_review_order_before_submit', array( $this, 'open_checkout_actions' ), 1 );
 			add_action( 'woocommerce_review_order_after_submit', array( $this, 'close_order_actions' ), 999 );
 			add_action( 'woocommerce_review_order_after_payment', array( $this, 'open_checkout_actions' ), 1 );
 			add_action( 'woocommerce_review_order_after_payment', array( $this, 'close_order_actions' ), 999 );
+			add_action( 'woocommerce_widget_shopping_cart_after_buttons', array( $this, 'open_mini_cart_actions' ), PHP_INT_MIN );
+			add_action( 'woocommerce_widget_shopping_cart_after_buttons', array( $this, 'close_order_actions' ), PHP_INT_MAX );
 			add_filter( 'render_block_woocommerce/cart', array( $this, 'prepend_cart_block_notice' ) );
 			add_filter( 'render_block_woocommerce/checkout', array( $this, 'prepend_checkout_block_notice' ) );
 
-			// 5. Server-side backstops: checkout validation (classic and cart API), and any new
-			//    order line, for payment plugins that build orders themselves.
+			// 3. Orders placed by unverified shoppers are refused on the server: at the classic
+			//    checkout's validation, at the Store API's checkout (POST only), and, for payment
+			//    plugins that build orders themselves, before the order or any of its lines is saved.
+			add_filter( 'rest_request_before_callbacks', array( $this, 'flag_store_api_checkout' ), 10, 3 );
+			add_action( 'woocommerce_after_checkout_validation', array( $this, 'refuse_classic_checkout' ), 10, 2 );
 			add_action( 'woocommerce_check_cart_items', array( $this, 'block_unverified_checkout' ) );
+			add_action( 'woocommerce_before_order_object_save', array( $this, 'guard_unverified_order' ), 5 );
 			add_action( 'woocommerce_before_order_item_object_save', array( $this, 'guard_unverified_order_item' ), 5 );
+
+			// 4. The verification record on orders placed by verified shoppers, and the check of
+			//    paid orders without one.
+			add_action( 'woocommerce_checkout_order_processed', array( $this, 'record_classic_order' ), 10, 3 );
+			add_action( 'woocommerce_store_api_checkout_order_processed', array( $this, 'record_verification' ) );
+			add_action( 'woocommerce_after_order_object_save', array( $this, 'fire_pending_record_hook' ) );
+			add_action( 'woocommerce_order_status_changed', array( $this, 'monitor_order_status' ), 10, 4 );
+
+			// 5. The order edit screen shows the verification record under the order details.
+			add_action( 'woocommerce_admin_order_data_after_order_details', array( $this, 'show_order_verification' ) );
+		}
+
+		/**
+		 * agewallet_meta_box_post_types: the Age Restriction meta box is not added for products.
+		 *
+		 * @param string[] $post_types
+		 * @return string[]
+		 */
+		public function drop_product_meta_box( $post_types ) {
+			return array_values( array_diff( (array) $post_types, array( 'product' ) ) );
 		}
 
 		/**
@@ -127,8 +162,8 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 * visitor is not yet verified. Decides checkout validation and the cart and checkout
 		 * pages' Verify my age message:
 		 *   - off                 → never
-		 *   - force-always        → any non-empty cart
-		 *   - conditional-on-cart → only when the cart holds a regulated item
+		 *   - force-always        → the cart holds a product not set to Never require verification
+		 *   - conditional-on-cart → the cart holds a regulated item
 		 */
 		public static function cart_requires_verification() {
 			$mode = self::checkout_gating_mode();
@@ -142,7 +177,12 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 				return false;
 			}
 			if ( AgeWalletOIDCClientPro::WC_GATE_MODE_FORCE_ALWAYS === $mode ) {
-				return true;
+				foreach ( WC()->cart->get_cart() as $item ) {
+					if ( ! empty( $item['data'] ) && self::product_requires_verification( $item['data'] ) ) {
+						return true;
+					}
+				}
+				return false;
 			}
 			// conditional-on-cart
 			return self::cart_contains_regulated_items();
@@ -169,8 +209,8 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * True when this visitor can't have this product in a cart or an order yet: a shopper (not
-		 * staff, wp-admin, cron or scheduled tasks) who hasn't verified, and the product needs
+		 * True when this visitor can't have this product in an order yet: a shopper (not staff,
+		 * wp-admin, cron or scheduled tasks) who hasn't verified, and the product needs
 		 * verification.
 		 *
 		 * @param mixed $product
@@ -182,92 +222,30 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 				&& ! self::visitor_is_verified();
 		}
 
-		/**
-		 * True for an ordinary page load (GET, not AJAX or the REST API, not an add-to-cart link).
-		 * Page caches may strip the verification cookie from these, so they must not decide who
-		 * can buy; the browser does that on the page itself.
-		 */
-		private static function is_page_render() {
-			if ( wp_doing_ajax() || wp_is_json_request() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
-				return false;
-			}
-			$method = isset( $_SERVER['REQUEST_METHOD'] ) ? strtoupper( sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) ) : 'GET';
-			if ( 'GET' !== $method && 'HEAD' !== $method ) {
-				return false;
-			}
-			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- only checks the parameter exists.
-			return ! isset( $_GET['add-to-cart'] );
-		}
+		// --- Listing cards ---
 
 		/**
-		 * woocommerce_is_purchasable / woocommerce_variation_is_purchasable.
-		 *
-		 * @param bool       $purchasable
-		 * @param WC_Product $product
-		 * @return bool
+		 * woocommerce_before_shop_loop_item (classic product loops: shop, category, tag, search,
+		 * related, upsells, cross-sells), lowest priority: for a product whose page is gated,
+		 * prints the mask (card_mask_html()) and opens the hidden wrapper around the card.
 		 */
-		public function filter_purchasable( $purchasable, $product ) {
-			if ( self::$skip_purchase_rule || ! $purchasable || self::is_page_render() || ! self::refuses( $product ) ) {
-				return $purchasable;
-			}
-			// The cart API's refusal ("... is not available for purchase") has no filter of its
-			// own, so its wording is replaced through the translation filter, from now until the
-			// end of this request only.
-			if ( ! has_filter( 'gettext_woocommerce', array( $this, 'filter_store_api_message' ) ) ) {
-				add_filter( 'gettext_woocommerce', array( $this, 'filter_store_api_message' ), 10, 2 );
-			}
-			return false;
-		}
-
-		/**
-		 * woocommerce_cart_item_is_purchasable: while WooCommerce loads the cart from the
-		 * shopper's session, keeps an item that only our rule refuses, so age-restricted items
-		 * stay in the cart until the shopper verifies. Adding to a cart and placing an order are
-		 * still refused (filter_purchasable(), block_unverified_checkout(),
-		 * guard_unverified_order_item()).
-		 *
-		 * @param bool       $purchasable The product's is_purchasable().
-		 * @param string     $key         Cart item key.
-		 * @param array      $values      Cart item: product_id, variation_id, variation, quantity.
-		 * @param WC_Product $product
-		 * @return bool
-		 */
-		public function keep_cart_item( $purchasable, $key, $values, $product ) {
-			if ( $purchasable || ! self::refuses( $product ) ) {
-				return $purchasable;
-			}
-			self::$skip_purchase_rule = true;
-			$purchasable              = $product->is_purchasable();
-			self::$skip_purchase_rule = false;
-			return $purchasable;
-		}
-
-		/**
-		 * woocommerce_before_template_part: before the product page's add-to-cart template (any
-		 * product type) of an age-restricted product, print the Verify my age notice and open the
-		 * wrapper. Both start hidden or shown for an unverified visitor; the script in
-		 * close_buy_area() swaps them for a verified one.
-		 *
-		 * @param string $template_name Template name, relative to WooCommerce's templates folder.
-		 */
-		public function open_buy_area( $template_name ) {
-			if ( ! self::is_buy_area( $template_name ) ) {
+		public function open_listing_card() {
+			global $product;
+			if ( ! self::card_is_masked( $product ) ) {
 				return;
 			}
-			global $product;
-			self::render_notice( self::verify_to_buy_text(), get_permalink( $product->get_id() ) );
-			echo '<div class="agewallet-buy-area" style="display:none;">';
+			echo self::card_mask_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in card_mask_html().
+			echo '<div class="agewallet-card-content" style="display:none;">';
 		}
 
 		/**
-		 * woocommerce_after_template_part: close the wrapper, and reveal the buy area (hiding the
-		 * notice) when the visitor has a verification cookie. It runs straight away, before
-		 * payment plugins draw their buttons.
-		 *
-		 * @param string $template_name Template name, relative to WooCommerce's templates folder.
+		 * woocommerce_after_shop_loop_item, highest priority: closes the wrapper opened by
+		 * open_listing_card() and reveals the card (hiding the mask) when the visitor has a
+		 * verification cookie.
 		 */
-		public function close_buy_area( $template_name ) {
-			if ( ! self::is_buy_area( $template_name ) ) {
+		public function close_listing_card() {
+			global $product;
+			if ( ! self::card_is_masked( $product ) ) {
 				return;
 			}
 			echo '</div>';
@@ -275,70 +253,168 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * The script that, for a visitor with a verification cookie, shows every buy area on the
-		 * page so far and hides the Verify my age notices and buttons beside them. The cart and
-		 * checkout pages' message (agewallet-verify-to-buy--order) is left alone.
+		 * woocommerce_blocks_product_grid_item_html (the grid blocks: Handpicked Products, Best
+		 * Selling Products, Products by Category and the others drawn from AbstractProductGrid):
+		 * the card's content masked when the product's page is gated.
+		 *
+		 * @param string     $html    The <li class="wc-block-grid__product"> element.
+		 * @param object     $data    The card's parts (image, title, price, badge, button, permalink).
+		 * @param WC_Product $product
+		 * @return string
+		 */
+		public function mask_product_grid_item( $html, $data, $product ) {
+			if ( ! self::card_is_masked( $product ) ) {
+				return $html;
+			}
+			return self::mask_list_item( $html );
+		}
+
+		/**
+		 * render_block_woocommerce/product-template (the Product Collection block and the Products
+		 * block built on it): each <li class="wc-block-product" data-wp-key="product-item-<id>">
+		 * whose product's page is gated has its content masked.
+		 *
+		 * @param string $block_content The block's HTML: a <ul> of product <li> elements.
+		 * @return string
+		 */
+		public function mask_product_template_block( $block_content ) {
+			if ( false === strpos( $block_content, 'product-item-' ) ) {
+				return $block_content;
+			}
+			$out    = '';
+			$offset = 0;
+			$length = strlen( $block_content );
+			while ( $offset < $length ) {
+				$start = self::find_list_item_start( $block_content, $offset );
+				if ( false === $start ) {
+					break;
+				}
+				$end = self::find_list_item_end( $block_content, $start );
+				if ( false === $end ) {
+					break;
+				}
+				$item = substr( $block_content, $start, $end - $start );
+				$out .= substr( $block_content, $offset, $start - $offset );
+				if ( preg_match( '/data-wp-key="product-item-(\d+)"/', $item, $m )
+					&& self::card_is_masked( wc_get_product( (int) $m[1] ) ) ) {
+					$item = self::mask_list_item( $item );
+				}
+				$out   .= $item;
+				$offset = $end;
+			}
+			return $out . substr( $block_content, $offset );
+		}
+
+		/**
+		 * The position of the next top-level <li in $html at or after $offset, or false.
+		 *
+		 * @param string $html
+		 * @param int    $offset
+		 * @return int|false
+		 */
+		private static function find_list_item_start( $html, $offset ) {
+			return preg_match( '/<li[\s>]/i', $html, $m, PREG_OFFSET_CAPTURE, $offset ) ? $m[0][1] : false;
+		}
+
+		/**
+		 * The position just after the </li> that closes the <li starting at $start, counting
+		 * nested lists, or false.
+		 *
+		 * @param string $html
+		 * @param int    $start
+		 * @return int|false
+		 */
+		private static function find_list_item_end( $html, $start ) {
+			$depth  = 0;
+			$offset = $start;
+			while ( preg_match( '/<(\/?)li[\s>\/]/i', $html, $m, PREG_OFFSET_CAPTURE, $offset ) ) {
+				$offset = $m[0][1] + strlen( $m[0][0] );
+				$depth += '/' === $m[1][0] ? -1 : 1;
+				if ( 0 === $depth ) {
+					$close = strpos( $html, '>', $m[0][1] );
+					return false === $close ? false : $close + 1;
+				}
+			}
+			return false;
+		}
+
+		/**
+		 * A product <li> with its content replaced by the mask and the hidden wrapper around the
+		 * content, followed by the reveal script. An <li> already masked is returned as it is.
+		 *
+		 * @param string $item The <li ...>...</li> element.
+		 * @return string
+		 */
+		private static function mask_list_item( $item ) {
+			if ( false !== strpos( $item, 'agewallet-card-content' ) ) {
+				return $item;
+			}
+			$open  = strpos( $item, '>' );
+			$close = strrpos( $item, '</li' );
+			if ( false === $open || false === $close || $close <= $open ) {
+				return $item;
+			}
+			return substr( $item, 0, $open + 1 )
+				. self::card_mask_html()
+				. '<div class="agewallet-card-content" style="display:none;">' . substr( $item, $open + 1, $close - $open - 1 ) . '</div>'
+				. wp_get_inline_script_tag( self::reveal_script() )
+				. substr( $item, $close );
+		}
+
+		/**
+		 * True when a listing card of this product is masked: the product's page is gated by the
+		 * page protection rules (AgeWallet_Gating_Manager::should_restrict_content() for the product,
+		 * which depends on the product and the rules, not on the visitor), and the visitor isn't
+		 * staff who can edit content (never gated). Decided once per product per request.
+		 *
+		 * @param mixed $product
+		 * @return bool
+		 */
+		private static function card_is_masked( $product ) {
+			if ( ! $product instanceof WC_Product || ! class_exists( 'AgeWallet_Gating_Manager' ) ) {
+				return false;
+			}
+			if ( is_user_logged_in() && current_user_can( 'edit_others_posts' ) ) {
+				return false;
+			}
+			static $decided = array();
+			$lookup_id = $product->get_parent_id() > 0 ? $product->get_parent_id() : $product->get_id();
+			if ( ! isset( $decided[ $lookup_id ] ) ) {
+				$decided[ $lookup_id ] = (bool) AgeWallet_Gating_Manager::instance()->should_restrict_content( $lookup_id, false );
+			}
+			return $decided[ $lookup_id ];
+		}
+
+		/**
+		 * The mask shown in place of a listing card: the text and a Verify my age button that
+		 * brings the visitor back to this page. Built once per request.
+		 *
+		 * @return string HTML.
+		 */
+		private static function card_mask_html() {
+			static $html = null;
+			if ( null === $html ) {
+				$button = class_exists( 'AgeWallet_Helpers' ) ? self::verify_button_html( AgeWallet_Helpers::instance()->get_current_url() ) : '';
+				$html   = '<div class="agewallet-card-mask" style="padding:12px 14px;border:1px solid currentColor;border-radius:6px;">'
+					. '<p class="agewallet-card-mask__text" style="margin:0 0 8px;">' . esc_html__( 'Verify your age to view this product.', 'agewallet-oidc-client' ) . '</p>'
+					. $button
+					. '</div>';
+			}
+			return $html;
+		}
+
+		/**
+		 * The script that, for a visitor with a verification cookie, shows every masked listing
+		 * card on the page so far and hides its mask.
 		 *
 		 * @return string JavaScript.
 		 */
 		private static function reveal_script() {
-			return '(function(){var m=document.cookie.match(/(?:^|; )agewallet_verified=([^;]+)/);'
+			$cookie = class_exists( 'AgeWallet_Gating_Manager' ) ? AgeWallet_Gating_Manager::VERIFIED_COOKIE_NAME : 'agewallet_verified';
+			return '(function(){var m=document.cookie.match(new RegExp("(?:^|; )"+' . wp_json_encode( $cookie ) . '+"=([^;]+)"));'
 				. 'if(!m||!/^[a-zA-Z0-9+\/=]+\.[a-f0-9]{64}$/.test(decodeURIComponent(m[1]))){return;}'
-				. 'var a=document.querySelectorAll(".agewallet-buy-area"),i;for(i=0;i<a.length;i++){a[i].style.display="";}'
-				. 'var n=document.querySelectorAll(".agewallet-verify-to-buy:not(.agewallet-verify-to-buy--order)");for(i=0;i<n.length;i++){n[i].style.display="none";}})();';
-		}
-
-		/**
-		 * True for the product page's add-to-cart template of a product that needs verification.
-		 *
-		 * @param string $template_name
-		 */
-		private static function is_buy_area( $template_name ) {
-			$template_name = (string) $template_name;
-			// The whole add-to-cart template (simple.php, variable.php, grouped.php, external.php, or
-			// another product type's), not the pieces it includes.
-			if ( 0 !== strpos( $template_name, 'single-product/add-to-cart/' )
-				|| false !== strpos( $template_name, '-button' )
-				|| 'single-product/add-to-cart/variation.php' === $template_name ) {
-				return false;
-			}
-			global $product;
-			// Staff are never asked to verify. Logged-in pages aren't page-cached and always carry
-			// the login cookie, so this is safe to decide on the server.
-			return $product instanceof WC_Product && self::product_requires_verification( $product ) && self::is_shopper_request();
-		}
-
-		/** The text shown in place of the buy area. */
-		public static function verify_to_buy_text() {
-			return __( 'Age verification is required before you can buy this item.', 'agewallet-oidc-client' );
-		}
-
-		/**
-		 * woocommerce_loop_add_to_cart_link (classic product loops and the Product Button block):
-		 * for an age-restricted product whose button adds it to the cart, a Verify my age button
-		 * that brings the visitor back to this page, then the add-to-cart button, wrapped and
-		 * hidden. The script after them swaps the two for a visitor with a verification cookie.
-		 * Buttons that link to the product's page (Select options, Read more) are left as they are.
-		 *
-		 * @param string     $html    The add-to-cart button's HTML.
-		 * @param WC_Product $product
-		 * @return string
-		 */
-		public function filter_loop_add_to_cart_link( $html, $product ) {
-			if ( ! $product instanceof WC_Product
-				|| false === strpos( (string) $product->add_to_cart_url(), 'add-to-cart=' )
-				|| ! self::product_requires_verification( $product )
-				|| ! self::is_shopper_request()
-				|| ! class_exists( 'AgeWallet_Helpers' ) ) {
-				return $html;
-			}
-			$button = self::verify_button_html( AgeWallet_Helpers::instance()->get_current_url() );
-			if ( '' === $button ) {
-				return $html;
-			}
-			return $button
-				. '<div class="agewallet-buy-area" style="display:none;">' . $html . '</div>'
-				. wp_get_inline_script_tag( self::reveal_script() );
+				. 'var a=document.querySelectorAll(".agewallet-card-content"),i;for(i=0;i<a.length;i++){a[i].style.display="";}'
+				. 'var n=document.querySelectorAll(".agewallet-card-mask");for(i=0;i<n.length;i++){n[i].style.display="none";}})();';
 		}
 
 		/**
@@ -383,59 +459,7 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			return $url;
 		}
 
-		/**
-		 * Classic add to cart refused by our rule. For an add-to-cart link or form (not AJAX), the
-		 * product is kept for redirect_refused_add_to_cart_link().
-		 *
-		 * @param string     $message
-		 * @param WC_Product $product
-		 * @return string
-		 */
-		public function filter_cannot_be_purchased_message( $message, $product ) {
-			if ( ! self::refuses( $product ) ) {
-				return $message;
-			}
-			// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- only checks the parameter exists.
-			if ( isset( $_REQUEST['add-to-cart'] ) && ! wp_doing_ajax() && ! wp_is_json_request() ) {
-				self::$refused_link_product = $product;
-			}
-			return self::cannot_be_purchased_text();
-		}
-
-		/** The classic add-to-cart refusal for an age-restricted product. */
-		private static function cannot_be_purchased_text() {
-			return __( 'This item requires age verification. Please verify your age on the product page first.', 'agewallet-oidc-client' );
-		}
-
-		/**
-		 * wp_loaded, priority 21 (after WooCommerce's add-to-cart handler at 20): when our rule
-		 * refused an add-to-cart link or form in this request, sends the visitor to the product's
-		 * page, whose notice says why and has the Verify my age button. The refusal notice is
-		 * dropped, since that page says the same.
-		 */
-		public function redirect_refused_add_to_cart_link() {
-			$product = self::$refused_link_product;
-			if ( ! $product instanceof WC_Product ) {
-				return;
-			}
-			self::$refused_link_product = null;
-
-			$notices = wc_get_notices();
-			if ( ! empty( $notices['error'] ) ) {
-				$refusal          = self::cannot_be_purchased_text();
-				$notices['error'] = array_values(
-					array_filter(
-						$notices['error'],
-						function ( $notice ) use ( $refusal ) {
-							return ! isset( $notice['notice'] ) || $refusal !== $notice['notice'];
-						}
-					)
-				);
-				wc_set_notices( $notices );
-			}
-			wp_safe_redirect( $product->get_permalink() );
-			exit;
-		}
+		// --- Cart, checkout and mini-cart ---
 
 		/**
 		 * True when the cart and checkout pages show the Verify my age message: the cart needs
@@ -465,9 +489,9 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * The checkout page's message, worded for Conditional on cart or Force always. Verify my age
-		 * brings the shopper back to the checkout, with the cart details in the verification's
-		 * metadata (inject_checkout_metadata()).
+		 * The checkout page's message, worded for the store rule. Verify my age brings the shopper
+		 * back to the checkout, with the cart details in the verification's metadata
+		 * (inject_checkout_metadata()).
 		 *
 		 * @return string HTML.
 		 */
@@ -479,26 +503,41 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * woocommerce_proceed_to_checkout, priority 1 (the classic cart, before WooCommerce's
-		 * express buttons at 10 and Proceed to Checkout at 20): the cart's message, then a hidden
-		 * wrapper around the rest of the area, closed by close_order_actions() at 999.
+		 * woocommerce_proceed_to_checkout, priority 1 (the classic cart's checkout area, where
+		 * payment plugins draw their express buttons before Proceed to checkout at 20): the cart's
+		 * message, and a style that hides everything else in the area except Proceed to checkout.
 		 */
-		public function open_cart_actions() {
+		public function print_cart_notice() {
 			if ( ! self::order_needs_verification() ) {
 				return;
 			}
+			echo '<style>.wc-proceed-to-checkout > :not(a.checkout-button):not(.agewallet-verify-to-buy):not(:has(a.checkout-button)){display:none!important;}</style>';
 			echo self::cart_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
-			self::open_order_actions();
 		}
 
 		/**
-		 * Priority 1 on two classic checkout places, each closed by close_order_actions() at 999:
-		 *   - woocommerce_review_order_before_submit (the payment area, redrawn on every order
-		 *     review update): a hidden wrapper around Place order and anything payment plugins put
-		 *     beside it, closed on woocommerce_review_order_after_submit;
-		 *   - woocommerce_review_order_after_payment (under the payment area, drawn once with the
-		 *     page): a hidden wrapper around the buttons payment plugins put there, such as PayPal
-		 *     Payments' PayPal and Google Pay buttons.
+		 * woocommerce_before_checkout_form, priority 1: the checkout's message at the top of the
+		 * classic checkout, and a style that hides WooCommerce's own pay buttons area
+		 * (wc_get_pay_buttons(), drawn above the customer details).
+		 */
+		public function print_checkout_notice() {
+			if ( ! self::order_needs_verification() ) {
+				return;
+			}
+			echo '<style>.woocommerce-pay-buttons{display:none!important;}</style>';
+			echo self::checkout_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
+		}
+
+		/**
+		 * Opens a hidden wrapper on three classic checkout places, each closed by
+		 * close_order_actions():
+		 *   - woocommerce_checkout_before_customer_details, lowest priority to 9 (payment plugins'
+		 *     express buttons above the customer details);
+		 *   - woocommerce_review_order_before_submit 1 to woocommerce_review_order_after_submit 999
+		 *     (Place order and anything payment plugins put beside it, redrawn on every order
+		 *     review update);
+		 *   - woocommerce_review_order_after_payment 1 to 999 (the buttons payment plugins put
+		 *     under the payment area, drawn once with the page).
 		 * The message is at the top of the page (print_checkout_notice()).
 		 */
 		public function open_checkout_actions() {
@@ -507,16 +546,28 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			}
 		}
 
-		/** Opens the hidden wrapper around the cart's or checkout's order buttons. */
+		/**
+		 * woocommerce_widget_shopping_cart_after_buttons, lowest priority (the classic mini-cart,
+		 * under its View cart and Checkout buttons): a style that hides everything inside the
+		 * buttons area except those two, and a hidden wrapper around what payment plugins draw
+		 * after them, closed by close_order_actions() at the highest priority.
+		 */
+		public function open_mini_cart_actions() {
+			if ( ! self::order_needs_verification() ) {
+				return;
+			}
+			echo '<style>p.woocommerce-mini-cart__buttons > :not(a.wc-forward){display:none!important;}</style>';
+			self::open_order_actions();
+		}
+
+		/** Opens the hidden wrapper around the checkout's or mini-cart's order buttons. */
 		private static function open_order_actions() {
 			self::$order_actions_open = true;
 			echo '<div class="agewallet-order-actions" style="display:none;">';
 		}
 
 		/**
-		 * woocommerce_proceed_to_checkout, woocommerce_review_order_after_submit and
-		 * woocommerce_review_order_after_payment, priority 999: closes the wrapper opened by
-		 * open_cart_actions() or open_checkout_actions().
+		 * Closes the wrapper opened by open_checkout_actions() or open_mini_cart_actions().
 		 */
 		public function close_order_actions() {
 			if ( self::$order_actions_open ) {
@@ -526,20 +577,10 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * woocommerce_before_checkout_form, priority 1: the checkout's message at the top of the
-		 * classic checkout.
-		 */
-		public function print_checkout_notice() {
-			if ( self::order_needs_verification() ) {
-				echo self::checkout_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
-			}
-		}
-
-		/**
-		 * render_block_woocommerce/cart: the cart's message above the Cart block, and its Proceed
-		 * to Checkout and Express Checkout areas hidden (order_actions_style()). The Cart block
-		 * changes the cart without reloading the page, so the page reloads when an item is removed
-		 * or added (cart_block_reload_script()), and the message is decided again.
+		 * render_block_woocommerce/cart: the cart's message above the Cart block, and its Express
+		 * Checkout area hidden (order_actions_style()). The Cart block changes the cart without
+		 * reloading the page, so the page reloads when an item is removed or added
+		 * (cart_block_reload_script()), and the message is decided again.
 		 *
 		 * @param string $block_content The block's HTML.
 		 * @return string
@@ -548,7 +589,7 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			if ( ! self::order_needs_verification() ) {
 				return $block_content;
 			}
-			return self::order_actions_style( array( 'proceed-to-checkout-block', 'cart-express-payment-block' ) )
+			return self::order_actions_style( array( 'cart-express-payment-block' ) )
 				. self::cart_notice_html()
 				. wp_get_inline_script_tag( self::cart_block_reload_script() )
 				. $block_content;
@@ -602,69 +643,95 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			return '<style>' . implode( ',', $selectors ) . '{display:none!important;}</style>';
 		}
 
+		// --- Refusing unverified orders ---
+
 		/**
-		 * The cart API's wording, only once our rule has refused a product in this request (the
-		 * filter is added at that point):
-		 *   - "... is not available for purchase": its add-to-cart refusal;
-		 *   - "... cannot be purchased. Please remove it (them) from your cart.": its check of the
-		 *     cart, shown by the Cart and Checkout blocks, which have the Verify my age message.
+		 * rest_request_before_callbacks (runs for every REST request, each request of a batch
+		 * included): marks the request that places an order through the Store API, POST
+		 * /wc/store/v1/checkout, for block_unverified_checkout().
 		 *
-		 * @param string $translation
-		 * @param string $text
-		 * @return string
+		 * @param mixed           $response
+		 * @param array           $handler
+		 * @param WP_REST_Request $request
+		 * @return mixed $response, unchanged.
 		 */
-		public function filter_store_api_message( $translation, $text ) {
-			if ( '&quot;%s&quot; is not available for purchase.' === $text ) {
-				/* translators: %s: product name */
-				return __( '&quot;%s&quot; requires age verification. Please verify your age on the product page first.', 'agewallet-oidc-client' );
-			}
-			if ( 'This item is not available for purchase.' === $text ) {
-				return __( 'This item requires age verification. Please verify your age on the product page first.', 'agewallet-oidc-client' );
-			}
-			if ( '%s cannot be purchased. Please remove it from your cart.' === $text ) {
-				/* translators: %s: product name */
-				return __( '%s requires age verification. Please use the Verify my age button on this page.', 'agewallet-oidc-client' );
-			}
-			if ( '%s cannot be purchased. Please remove them from your cart.' === $text ) {
-				/* translators: %s: product names */
-				return __( '%s require age verification. Please use the Verify my age button on this page.', 'agewallet-oidc-client' );
-			}
-			return $translation;
+		public function flag_store_api_checkout( $response, $handler, $request ) {
+			self::$store_api_checkout = $request instanceof WP_REST_Request
+				&& 'POST' === $request->get_method()
+				&& (bool) preg_match( self::STORE_API_CHECKOUT_ROUTE, (string) $request->get_route() );
+			return $response;
 		}
 
 		/**
-		 * woocommerce_check_cart_items: fires in both classic checkout validation and the
-		 * Store API cart validation (block checkout / express-pay). Adds a blocking error
-		 * when the cart needs verification. Skipped on the cart page so it doesn't nag
-		 * before the shopper reaches checkout, and on plain page loads: the cart and checkout
-		 * pages show the Verify my age message instead (an error here would replace the classic
-		 * checkout form), and WooCommerce's blocks run this action while building any page.
+		 * woocommerce_after_checkout_validation (the classic checkout's submit, whoever calls
+		 * WC_Checkout::process_checkout()): the refusal as a checkout error, so no order is created.
+		 *
+		 * @param array    $data   The posted checkout fields.
+		 * @param WP_Error $errors The checkout's errors.
+		 */
+		public function refuse_classic_checkout( $data, $errors ) {
+			if ( $errors instanceof WP_Error && self::cart_requires_verification() ) {
+				$errors->add( 'agewallet_age_verification_required', self::refusal_message() );
+			}
+		}
+
+		/**
+		 * woocommerce_check_cart_items, only in the Store API's checkout request (POST
+		 * /wc/store/v1/checkout, flag_store_api_checkout()): the refusal as a cart error, which the
+		 * Store API returns as a 409 before the order is placed. Cart reads, the Checkout block's
+		 * updates and the classic pages run this action too and are left alone.
 		 */
 		public function block_unverified_checkout() {
-			if ( function_exists( 'is_cart' ) && is_cart() ) {
-				return;
-			}
-			if ( self::is_page_render() ) {
-				return;
-			}
-			if ( self::cart_requires_verification() ) {
+			if ( self::$store_api_checkout && self::cart_requires_verification() ) {
 				wc_add_notice( self::refusal_message(), 'error' );
 			}
 		}
 
 		/** The refusal shoppers see at checkout. */
 		public static function refusal_message() {
-			return __( 'Age verification required before you can place this order.', 'agewallet-oidc-client' );
+			return __( 'Age verification is required before you can place this order. Please verify your age at checkout.', 'agewallet-oidc-client' );
 		}
 
 		/**
-		 * woocommerce_before_order_item_object_save: the backstop. Runs whenever a new product
-		 * line is saved to an order, whoever builds the order, so it also covers payment plugins
-		 * that create orders themselves (they save the lines before taking payment).
+		 * woocommerce_before_order_object_save: the backstop, for payment plugins that build orders
+		 * themselves. A new order (no id yet, not the Checkout block's draft) in an unverified
+		 * shopper's request is refused when it holds a line that needs verification, or, when it
+		 * has no lines yet (wc_create_order() saves an empty order first), when the cart needs
+		 * verification. The request is ended before anything is written (end_request()). A new
+		 * order in a verified shopper's request gets the verification record (record_verification()).
+		 * Existing orders are never touched.
+		 *
+		 * @param WC_Order $order The order being saved.
+		 */
+		public function guard_unverified_order( $order ) {
+			if ( ! $order instanceof WC_Order || $order->get_id() || 'checkout-draft' === $order->get_status() ) {
+				return;
+			}
+			if ( ! self::is_shopper_request() || ! self::checkout_gating_enabled() ) {
+				return;
+			}
+			if ( self::visitor_is_verified() ) {
+				if ( '' === (string) $order->get_meta( self::META_KEY_ORDER_VERIFIED_AT ) ) {
+					$order->update_meta_data( self::META_KEY_ORDER_VERIFIED_AT, self::now() );
+					self::$record_pending[ spl_object_id( $order ) ] = true;
+				}
+				return;
+			}
+			$needs = count( $order->get_items() ) > 0
+				? self::order_holds_product_requiring_verification( $order )
+				: self::cart_requires_verification();
+			if ( $needs ) {
+				self::end_request( 'Refused a new order for an unverified visitor.' );
+			}
+		}
+
+		/**
+		 * woocommerce_before_order_item_object_save: a new product line (not on the Checkout
+		 * block's draft order) of a product that needs verification, saved in an unverified
+		 * shopper's request, ends the request (end_request()). Lines already saved are left alone.
 		 *
 		 * WooCommerce catches and only logs exceptions thrown while an order saves its lines, so
-		 * throwing here wouldn't stop anything. The request is ended instead. Staff, scheduled
-		 * tasks (e.g. subscription renewals) and wp-admin are left alone, as are lines already saved.
+		 * throwing here wouldn't stop anything.
 		 *
 		 * @param WC_Order_Item $item The line being saved.
 		 */
@@ -675,8 +742,21 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			if ( ! self::refuses( $item->get_product() ) ) {
 				return;
 			}
+			$order = $item->get_order_id() ? wc_get_order( $item->get_order_id() ) : null;
+			if ( $order instanceof WC_Order && 'checkout-draft' === $order->get_status() ) {
+				return;
+			}
+			self::end_request( 'Refused a new order line for an unverified visitor (order ' . (int) $item->get_order_id() . ').' );
+		}
 
-			agewallet_debug_log( '[AgeWallet WC] Refused a new order line for an unverified visitor (order ' . (int) $item->get_order_id() . ').' );
+		/**
+		 * Ends the request with the refusal: a JSON 403 for AJAX, JSON and REST requests, a
+		 * wp_die() page otherwise.
+		 *
+		 * @param string $log_line What was refused, for the debug log.
+		 */
+		private static function end_request( $log_line ) {
+			agewallet_debug_log( '[AgeWallet WC] ' . $log_line );
 			$message = self::refusal_message();
 			if ( wp_doing_ajax() || wp_is_json_request() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) {
 				wp_send_json_error( array( 'message' => $message, 'code' => 'agewallet_age_verification_required' ), 403 );
@@ -699,9 +779,26 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
+		 * True when the order holds a product line whose product needs verification
+		 * (product_requires_verification()).
+		 *
+		 * @param WC_Order $order
+		 * @return bool
+		 */
+		private static function order_holds_product_requiring_verification( $order ) {
+			foreach ( $order->get_items() as $item ) {
+				if ( $item instanceof WC_Order_Item_Product && self::product_requires_verification( $item->get_product() ) ) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		/**
 		 * True when buying this product needs verification, for any visitor who hasn't verified:
-		 * checkout gating is on, and it's Force always or the product is regulated. Doesn't look
-		 * at the visitor.
+		 * checkout gating is on, and either it's Force always and the product isn't set to Never
+		 * require verification, or it's Conditional on cart and the product is regulated. Doesn't
+		 * look at the visitor.
 		 *
 		 * @param mixed $product
 		 * @return bool
@@ -714,22 +811,180 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			if ( AgeWalletOIDCClientPro::WC_GATE_MODE_OFF === $mode ) {
 				return false;
 			}
-			return AgeWalletOIDCClientPro::WC_GATE_MODE_FORCE_ALWAYS === $mode || self::product_is_regulated( $product );
+			if ( AgeWalletOIDCClientPro::WC_GATE_MODE_FORCE_ALWAYS === $mode ) {
+				return 'override_not_regulated' !== self::product_regulated_status( $product );
+			}
+			return self::product_is_regulated( $product );
 		}
 
+		// --- Verification record and monitor ---
+
 		/**
-		 * Prints the verify notice: the text, and a Verify my age button that posts to the launch
-		 * address with the same metadata as the gate's I Agree button, and brings the visitor back to $return_url.
+		 * woocommerce_checkout_order_processed (the classic checkout, after the order is created):
+		 * the verification record (record_verification()).
 		 *
-		 * @param string $text       The notice text.
-		 * @param string $return_url Where the visitor comes back to.
+		 * @param int      $order_id
+		 * @param array    $posted_data
+		 * @param WC_Order $order
 		 */
-		public static function render_notice( $text, $return_url ) {
-			echo self::notice_html( $text, $return_url ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
+		public function record_classic_order( $order_id, $posted_data, $order ) {
+			self::record_verification( $order instanceof WC_Order ? $order : wc_get_order( $order_id ) );
 		}
 
 		/**
-		 * The verify notice's HTML (render_notice()).
+		 * Writes the verification record on an order placed in a verified visitor's request: the
+		 * time in META_KEY_ORDER_VERIFIED_AT, once, then the agewallet_wc_verified_order action.
+		 * Also hooked to woocommerce_store_api_checkout_order_processed (the Store API's checkout,
+		 * after the order is placed).
+		 *
+		 * @param WC_Order|mixed $order
+		 */
+		public static function record_verification( $order ) {
+			if ( ! $order instanceof WC_Order || ! self::visitor_is_verified() ) {
+				return;
+			}
+			if ( '' !== (string) $order->get_meta( self::META_KEY_ORDER_VERIFIED_AT ) ) {
+				return;
+			}
+			$verified_at = self::now();
+			$order->update_meta_data( self::META_KEY_ORDER_VERIFIED_AT, $verified_at );
+			if ( $order->get_id() ) {
+				$order->save_meta_data();
+			}
+			self::fire_verified_order_hook( $order, $verified_at );
+		}
+
+		/**
+		 * woocommerce_after_order_object_save: fires the agewallet_wc_verified_order action for an
+		 * order whose record was written before its first save (guard_unverified_order()).
+		 *
+		 * @param WC_Order|mixed $order
+		 */
+		public function fire_pending_record_hook( $order ) {
+			if ( ! $order instanceof WC_Order || empty( self::$record_pending[ spl_object_id( $order ) ] ) ) {
+				return;
+			}
+			unset( self::$record_pending[ spl_object_id( $order ) ] );
+			self::fire_verified_order_hook( $order, (string) $order->get_meta( self::META_KEY_ORDER_VERIFIED_AT ) );
+		}
+
+		/**
+		 * Fires agewallet_wc_verified_order.
+		 *
+		 * @param WC_Order $order       The order, saved.
+		 * @param string   $verified_at The record's time (UTC, Y-m-d H:i:s).
+		 */
+		private static function fire_verified_order_hook( $order, $verified_at ) {
+			/**
+			 * An order was placed by an age-verified shopper and carries the verification record.
+			 *
+			 * @param WC_Order $order       The order.
+			 * @param string   $verified_at When the record was written (UTC, Y-m-d H:i:s).
+			 */
+			do_action( 'agewallet_wc_verified_order', $order, $verified_at );
+		}
+
+		/** The current UTC time as Y-m-d H:i:s. */
+		private static function now() {
+			return gmdate( 'Y-m-d H:i:s' );
+		}
+
+		/**
+		 * woocommerce_admin_order_data_after_order_details (the order edit screen's General
+		 * column, under the date, status and customer): the verification record, as a line with
+		 * the record's time in the site's timezone and date and time formats. Orders without a
+		 * record get no line.
+		 *
+		 * @param WC_Order|mixed $order
+		 */
+		public function show_order_verification( $order ) {
+			if ( ! $order instanceof WC_Order ) {
+				return;
+			}
+			$verified_at = (string) $order->get_meta( self::META_KEY_ORDER_VERIFIED_AT );
+			if ( '' === $verified_at ) {
+				return;
+			}
+			try {
+				$time  = new WC_DateTime( $verified_at, new DateTimeZone( 'UTC' ) );
+				$time->setTimezone( new DateTimeZone( wc_timezone_string() ) );
+				$shown = wc_format_datetime( $time, get_option( 'date_format' ) . ' ' . get_option( 'time_format' ) );
+			} catch ( Exception $e ) {
+				$shown = $verified_at . ' UTC';
+			}
+			echo '<p class="form-field form-field-wide agewallet-order-verification"><strong>'
+				. esc_html__( 'Age verification:', 'agewallet-oidc-client' ) . '</strong> '
+				/* translators: %s: the date and time the shopper's verification was recorded on the order */
+				. esc_html( sprintf( __( 'Verified with AgeWallet on %s.', 'agewallet-oidc-client' ), $shown ) )
+				. '</p>';
+		}
+
+		/**
+		 * woocommerce_order_status_changed: a paid order (processing or completed) that holds a
+		 * product needing verification but carries no verification record gets an order note, a
+		 * line in the WooCommerce log (source "agewallet") and one email to the site's admin
+		 * address, once (META_KEY_ORDER_NO_RECORD_NOTIFIED). Orders created in the admin, and
+		 * status changes made by cron or scheduled actions, are left alone.
+		 *
+		 * @param int      $order_id
+		 * @param string   $from  The previous status.
+		 * @param string   $to    The new status.
+		 * @param WC_Order $order
+		 */
+		public function monitor_order_status( $order_id, $from, $to, $order ) {
+			if ( ! in_array( $to, array( 'processing', 'completed' ), true ) || ! self::checkout_gating_enabled() ) {
+				return;
+			}
+			if ( ! $order instanceof WC_Order ) {
+				$order = wc_get_order( $order_id );
+				if ( ! $order instanceof WC_Order ) {
+					return;
+				}
+			}
+			if ( '' !== (string) $order->get_meta( self::META_KEY_ORDER_VERIFIED_AT )
+				|| '1' === (string) $order->get_meta( self::META_KEY_ORDER_NO_RECORD_NOTIFIED ) ) {
+				return;
+			}
+			if ( 'admin' === $order->get_created_via() || wp_doing_cron() || did_action( 'action_scheduler_begin_execute' ) ) {
+				return;
+			}
+			if ( ! self::order_holds_product_requiring_verification( $order ) ) {
+				return;
+			}
+
+			$method = $order->get_payment_method_title();
+			if ( '' === $method ) {
+				$method = $order->get_payment_method();
+			}
+			if ( '' === $method ) {
+				$method = __( 'none', 'agewallet-oidc-client' );
+			}
+			/* translators: %s: payment method name */
+			$note = sprintf( __( 'This order has no age verification record. Payment method: %s. Please check the customer\'s age before shipping.', 'agewallet-oidc-client' ), $method );
+
+			$order->add_order_note( $note );
+			if ( function_exists( 'wc_get_logger' ) ) {
+				wc_get_logger()->warning(
+					sprintf( 'Order #%d has no age verification record (status %s, payment method: %s).', $order->get_id(), $to, $method ),
+					array( 'source' => 'agewallet' )
+				);
+			}
+			wp_mail(
+				get_option( 'admin_email' ),
+				/* translators: 1: site name, 2: order number */
+				sprintf( __( '[%1$s] Order #%2$s has no age verification record', 'agewallet-oidc-client' ), wp_specialchars_decode( get_option( 'blogname' ), ENT_QUOTES ), $order->get_order_number() ),
+				$note . "\n\n" . $order->get_edit_order_url() . "\n"
+			);
+			$order->update_meta_data( self::META_KEY_ORDER_NO_RECORD_NOTIFIED, '1' );
+			$order->save_meta_data();
+		}
+
+		// --- Notices ---
+
+		/**
+		 * The verify notice's HTML: the text, and a Verify my age button that posts to the launch
+		 * address with the same metadata as the gate's I Agree button, and brings the visitor back
+		 * to $return_url.
 		 *
 		 * @param string $text       The notice text.
 		 * @param string $return_url Where the visitor comes back to.
@@ -760,6 +1015,8 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			<?php
 			return (string) ob_get_clean();
 		}
+
+		// --- Settings and product flags ---
 
 		/**
 		 * Returns the configured WC checkout-gate mode: one of
@@ -960,6 +1217,24 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
+		 * The product's own regulated status (META_KEY_PRODUCT_REGULATED_STATUS): 'regulated',
+		 * 'override_not_regulated' or 'not_regulated' (the default when nothing is saved).
+		 * Variations read their parent's.
+		 *
+		 * @param WC_Product|int $product A product, or a product id.
+		 * @return string
+		 */
+		public static function product_regulated_status( $product ) {
+			if ( $product instanceof WC_Product ) {
+				$lookup_id = $product->get_parent_id() > 0 ? $product->get_parent_id() : $product->get_id();
+			} else {
+				$lookup_id = (int) $product;
+			}
+			$status = $lookup_id ? get_post_meta( $lookup_id, self::META_KEY_PRODUCT_REGULATED_STATUS, true ) : '';
+			return in_array( $status, array( 'regulated', 'override_not_regulated' ), true ) ? $status : self::PRODUCT_REGULATED_STATUS_DEFAULT;
+		}
+
+		/**
 		 * True if the given product is regulated under the current rules.
 		 *
 		 * Per-product flag wins over category/tag flags:
@@ -979,7 +1254,7 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			}
 			$lookup_id = $product->get_parent_id() > 0 ? $product->get_parent_id() : $product->get_id();
 
-			$status = get_post_meta( $lookup_id, self::META_KEY_PRODUCT_REGULATED_STATUS, true );
+			$status = self::product_regulated_status( $product );
 			if ( 'regulated' === $status ) {
 				return true;
 			}
@@ -1008,6 +1283,8 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 
 			return false;
 		}
+
+		// --- Checkout metadata ---
 
 		/**
 		 * Build the per-checkout cart context as an associative array.

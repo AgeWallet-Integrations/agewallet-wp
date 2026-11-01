@@ -81,18 +81,26 @@ Useful for adding margins.
 * `.agewallet-protected-placeholder` - The placeholder box shown to unverified users, contains the gate prompt.
 Controls borders, background, and padding.
 
-= 8. WooCommerce: Verify to buy =
+= 8. WooCommerce: Verify my age =
 
-* `.agewallet-verify-to-buy` - The notice shown in place of a product's add-to-cart area until the shopper verifies their age.
+* `.agewallet-verify-to-buy` - The Verify my age notice on the cart and checkout pages, and the form around a masked listing card's Verify my age button.
 Controls borders, background, and padding.
 
-* `.agewallet-verify-to-buy__text` - The notice text ("Age verification is required before you can buy this item.").
+* `.agewallet-verify-to-buy--order` - The cart and checkout pages' notice ("Your order contains items that require age verification.", "Your cart contains regulated items that require age verification." or "Age verification is required before you can place an order.").
+
+* `.agewallet-verify-to-buy--loop` - The form around a masked listing card's Verify my age button.
+
+* `.agewallet-verify-to-buy__text` - The notice text.
 
 * `.agewallet-verify-to-buy__btn` - The "Verify my age" button.
 
-* `.agewallet-verify-to-buy__note` - The small consent line under the button.
+* `.agewallet-verify-to-buy__note` - The small consent line under the cart and checkout pages' button.
 
-* `.agewallet-buy-area` - Wraps the product's add-to-cart area (and any express payment buttons inside it). Hidden until the shopper has verified.
+* `.agewallet-card-mask` - The box shown in place of a listing card of a product whose page is gated, until the shopper verifies. `.agewallet-card-mask__text` is its text ("Verify your age to view this product.").
+
+* `.agewallet-card-content` - Wraps a masked listing card's own content. Hidden until the shopper has verified.
+
+* `.agewallet-order-actions` - Wraps the express checkout buttons on the classic checkout and the classic mini-cart, and Place order, while the shopper is unverified. Hidden.
 
 = Customization Tips =
 
