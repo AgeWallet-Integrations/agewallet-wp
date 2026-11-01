@@ -4,7 +4,7 @@ Tags: age verification, age estimation, age gate, woocommerce, content gating
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.5.8
+Stable tag: 1.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,7 +26,7 @@ Multiple age-assurance methods are supported, so you can meet age-restriction re
 
 = Built for WooCommerce =
 
-WooCommerce is supported out of the box: three Checkout gating modes plus per-product / per-category regulated flagging, so age-restricted items can't be bought until the shopper verifies their age, while the rest of your catalog stays open.
+WooCommerce is supported out of the box: one Age verification choice per product (verify to view and buy, verify to buy only, follow the store's rules, or never), a store-wide Checkout gating rule, and category and tag flags. Shoppers browse and add to the cart as usual; the cart and checkout pages ask them to verify, an order placed without verifying is refused before it exists, and the rest of your catalog stays open.
 
 = Flexible age-gate rules =
 
@@ -87,7 +87,9 @@ Yes. Standard (Overlay) mode is fully cache-compatible — the page HTML is the 
 
 = Does it work with WooCommerce? =
 
-Yes. Mark products as regulated (per product, per category, or per tag), and shoppers must verify their age before they can buy them: the product's add-to-cart area, express payment buttons included, is replaced by a Verify my age button until they do, and WooCommerce refuses to add the product to any cart. Force Always applies this to every product. Payment plugins that place orders through WooCommerce's checkout, and those that build orders themselves, are refused for unverified shoppers.
+Yes. Each product has an Age verification choice (Product data → AgeWallet tab): Follow store rules, Require verification to view and buy, Require verification to buy only, or Never require verification. Categories and tags can be marked Require age verification to buy, and the Checkout gating rule on the Content Guarding page chooses which products need verification: None, Only the products you flag, or All products except those you exempt. Shoppers browse and add to the cart as usual. The cart page shows a Verify my age message above Proceed to checkout, the checkout shows it in place of Place order, and express checkout buttons are hidden until the shopper verifies. An order placed without verifying is refused by the server before it exists, whether it comes through the classic checkout, the Checkout block, an express button or a payment plugin that builds orders itself. Orders placed by verified shoppers carry a verification record.
+
+**Express checkout.** AgeWallet hides the express checkout buttons that payment plugins place in WooCommerce's cart page checkout area, the classic mini-cart, the classic checkout (above the customer details and in the payment area) and the Cart and Checkout blocks' express payment area until the shopper has verified, and it refuses any order an unverified shopper places through WooCommerce's checkout, the classic form or the Store API. Tested with WooPayments 11.2.0, WooCommerce Stripe 11.1.1 and WooCommerce PayPal Payments 4.2.0. Express buttons on product pages are not hidden: turn that location off in your payment plugin's settings. Anything else is not supported.
 
 = How do I customize the look of the gate? =
 
@@ -122,11 +124,13 @@ Deleting the plugin from the Plugins screen runs `uninstall.php`, which removes 
     * Per-post overrides via the editor sidebar.
     * Inline `[agewallet_protected]` shortcode for specific page elements.
 * WooCommerce integration:
-    * Three Checkout gating modes: Off, Force Always (verify before buying anything), Conditional on Cart (verify before buying regulated products).
-    * Age-restricted products can't be bought until the shopper verifies: their add-to-cart area (express payment buttons included) is replaced by a Verify my age button, and WooCommerce refuses to add them to any cart until then.
-    * Per-product regulated controls: Not Regulated / Regulated / Override.
-    * Per-category and per-tag regulated flagging on the term-edit screens (products inherit from any of their categories or tags).
-    * Cart-context metadata (cart hash, total, currency, line-item count, billing country) attached to verifications that start from the checkout page. In Conditional-on-Cart mode, these verifications also carry a cart_triggers audit trail that captures which products / categories / tags fired the gate.
+    * One Age verification choice per product: Follow store rules, Require verification to view and buy, Require verification to buy only, or Never require verification.
+    * Three Checkout gating rules: None, Only the products you flag, All products except those you exempt.
+    * Shoppers browse and add to the cart as usual; the cart and checkout pages ask them to verify, with express checkout buttons and Place order hidden until they do; an order placed without verifying is refused by the server before it exists.
+    * Listing cards of products whose page is gated are masked until the shopper verifies.
+    * Per-category and per-tag flags on the term-edit screens (products inherit from any of their categories or tags).
+    * A verification record on every order placed by a verified shopper, shown on the order's edit screen, an action for it, and a note, log line and email for paid orders without one.
+    * Cart-context metadata (cart hash, total, currency, line-item count, billing country) attached to verifications that start from the cart or checkout page. In Conditional-on-Cart mode, these verifications also carry a cart_triggers audit trail that captures which products / categories / tags fired the gate.
 * Metadata pass-through: attach an opaque per-verification string (up to 4 KB) — static text or auto-composed JSON of selected request-context fields — that round-trips through the OIDC flow and surfaces on the `/userinfo` response.
 
 == Screenshots ==
@@ -134,13 +138,25 @@ Deleting the plugin from the Plugins screen runs `uninstall.php`, which removes 
 1. The age gate overlay shown to unverified visitors in Standard (Overlay) mode.
 2. The plugin's setup wizard — Step 1 (API Credentials).
 3. The Content Guarding screen — taxonomy, path, and global protection rules, plus the WooCommerce "gate the checkout" setting.
-4. The per-product Regulated status control on the WooCommerce product edit screen.
+4. The per-product Age verification choice on the WooCommerce product edit screen.
 
 == License ==
 
 This plugin is licensed under the GNU General Public License v2.0 or later. A copy of the license is included in `LICENSE.txt` and is available at https://www.gnu.org/licenses/gpl-2.0.html.
 
 == Changelog ==
+
+= 1.6.0 =
+* Feature: One "Age verification" choice per WooCommerce product, in the AgeWallet tab of Product data: Follow store rules, Require verification to view and buy, Require verification to buy only, or Never require verification. It replaces the Regulated status radios and, on products, the Age Restriction box (the box stays on pages and posts). Existing products keep their saved settings; a saved combination that matches no choice shows as Custom until a choice is saved. A hint under the choice says whether the product's page is gated and whether shoppers verify before buying it.
+* Change: Shoppers browse and add age-restricted products to the cart as usual; nothing is refused before the order. The cart page shows the Verify my age message above Proceed to checkout, the checkout shows it in place of Place order, and the express checkout buttons that payment plugins place on the cart page, the classic mini-cart, the classic checkout and the Cart and Checkout blocks are hidden until the shopper verifies. The product page's Verify my age notice and the add-to-cart refusals are gone.
+* Security: An order placed without verifying is refused by the server before it exists: at the classic checkout's validation, at the Store API checkout used by the Checkout block and express buttons, and before any order a payment plugin builds itself (or any of its lines) is saved.
+* Change: Checkout gating's choices are now None, Only the products you flag, and All products except those you exempt (the stored values are unchanged). Under All products except those you exempt, products set to Never require verification can be bought without verifying.
+* Feature: Listing cards (shop, category, tag and search pages, related products, the product grid blocks and the Product Collection block) of products whose page is gated show "Verify your age to view this product." with a Verify my age button until the shopper verifies. Listing pages stay the same for every visitor, so page caching keeps working.
+* Feature: Orders placed by verified shoppers carry a verification record (order meta `_agewallet_verified_at`), shown on the order's edit screen under the order details, and fire the `agewallet_wc_verified_order` action. A paid order (processing or completed) that holds a product needing verification but has no record gets an order note, a line in the WooCommerce log (source agewallet) and one email to the site's admin address.
+* Feature: The `agewallet_visitor_is_verified` filter decides on the server whether a visitor counts as verified for buying, so a site can accept its own proof of age.
+* Change: Verifications started from the cart or checkout page carry the cart details (cart hash, total, currency and, under Only the products you flag, the products, categories and tags that need verification) in their metadata, and the cart is kept through the verification.
+* Change: The category and tag checkbox reads "Require age verification to buy (AgeWallet)".
+* Note: clear your page cache once after updating, so cached listing and product pages pick up the change.
 
 = 1.5.8 =
 * Security: WooCommerce age-restricted products can no longer be bought before age verification, by any route. Until the shopper verifies, a regulated product can't be added to the cart (WooCommerce's own purchasability rule, including the cart API and payment plugins' express buttons), and its add-to-cart area, express payment buttons included, is replaced by a Verify my age button. Checkout validation and a backstop for payment plugins that build orders themselves also refuse unverified regulated orders.
@@ -225,6 +241,9 @@ This plugin is licensed under the GNU General Public License v2.0 or later. A co
 * Security: Hardened client-side script by adding click handlers dynamically instead of using inline attributes.
 
 == Upgrade Notice ==
+
+= 1.6.0 =
+One Age verification choice per product; shoppers add to the cart as usual and verify on the cart or checkout page; orders placed without verifying are refused on the server; express checkout buttons hidden until verified. Clear your page cache once after updating.
 
 = 1.5.8 =
 Security release: age-restricted WooCommerce products can no longer be bought before age verification, including through block checkout and express payment buttons. Page caches no longer serve gated pages without the age gate. Clear your page cache once after updating. Recommended for all users.
