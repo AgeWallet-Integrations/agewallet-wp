@@ -4,7 +4,7 @@ Tags: age verification, age estimation, age gate, woocommerce, content gating
 Requires at least: 6.0
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.6.0
+Stable tag: 1.6.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -146,6 +146,9 @@ This plugin is licensed under the GNU General Public License v2.0 or later. A co
 
 == Changelog ==
 
+= 1.6.1 =
+* Fix: On the Checkout block, only the Place order button is hidden until the shopper verifies. The order summary WooCommerce shows above the button on phones and narrow screens, and any notice beside the button, are no longer hidden with it.
+
 = 1.6.0 =
 * Feature: One "Age verification" choice per WooCommerce product, in the AgeWallet tab of Product data: Follow store rules, Require verification to view and buy, Require verification to buy only, or Never require verification. It replaces the Regulated status radios and, on products, the Age Restriction box (the box stays on pages and posts). Existing products keep their saved settings; a saved combination that matches no choice shows as Custom until a choice is saved. A hint under the choice says whether the product's page is gated and whether shoppers verify before buying it.
 * Change: Shoppers browse and add age-restricted products to the cart as usual; nothing is refused before the order. The cart page shows the Verify my age message above Proceed to checkout, the checkout shows it in place of Place order, and the express checkout buttons that payment plugins place on the cart page, the classic mini-cart, the classic checkout and the Cart and Checkout blocks are hidden until the shopper verifies. The product page's Verify my age notice and the add-to-cart refusals are gone.
@@ -241,6 +244,9 @@ This plugin is licensed under the GNU General Public License v2.0 or later. A co
 * Security: Hardened client-side script by adding click handlers dynamically instead of using inline attributes.
 
 == Upgrade Notice ==
+
+= 1.6.1 =
+Fix for the Checkout block: the order summary WooCommerce shows above Place order on phones and narrow screens is no longer hidden until the shopper verifies.
 
 = 1.6.0 =
 One Age verification choice per product; shoppers add to the cart as usual and verify on the cart or checkout page; orders placed without verifying are refused on the server; express checkout buttons hidden until verified. Clear your page cache once after updating.

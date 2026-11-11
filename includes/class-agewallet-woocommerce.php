@@ -89,6 +89,15 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			'.wc-block-components-express-payment-continue-rule',
 		);
 
+		/**
+		 * The Checkout block's order buttons as WooCommerce draws them in the browser: everything in
+		 * the Checkout Actions block's actions row except the Return to cart link, so Place order or
+		 * the button the chosen payment method draws in its place. The block's other children, the
+		 * Order summary it draws above the row on checkouts up to 920px wide and its notices area,
+		 * are not matched.
+		 */
+		const BLOCK_PLACE_ORDER_SELECTOR = '.wp-block-woocommerce-checkout-actions-block .wc-block-checkout__actions_row > :not(.wc-block-components-checkout-return-to-cart-button)';
+
 		public static function instance() {
 			if ( is_null( self::$instance ) ) {
 				self::$instance = new self();
@@ -612,7 +621,8 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 
 		/**
 		 * render_block_woocommerce/checkout: the checkout's message above the Checkout block, and
-		 * its Express Checkout and actions (Place order) areas hidden (order_actions_style()).
+		 * its Express Checkout area and order buttons (BLOCK_PLACE_ORDER_SELECTOR) hidden
+		 * (order_actions_style()).
 		 *
 		 * @param string $block_content The block's HTML.
 		 * @return string
@@ -621,22 +631,24 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			if ( ! self::order_needs_verification() ) {
 				return $block_content;
 			}
-			return self::order_actions_style( array( 'checkout-actions-block', 'checkout-express-payment-block' ) )
+			return self::order_actions_style( array( 'checkout-express-payment-block' ), array( self::BLOCK_PLACE_ORDER_SELECTOR ) )
 				. self::checkout_notice_html() . $block_content;
 		}
 
 		/**
 		 * A style that hides the given Cart or Checkout inner blocks by their block class
-		 * (wp-block-woocommerce-<name>), and the express payment area by the classes WooCommerce
-		 * draws it with (BLOCK_EXPRESS_PAYMENT_SELECTORS). WooCommerce draws these blocks in the
-		 * browser even when their markup is left out of the page. Every express payment method is
-		 * drawn in the Express Checkout block, and Place order in the Checkout Actions block.
+		 * (wp-block-woocommerce-<name>), the given selectors, and the express payment area by the
+		 * classes WooCommerce draws it with (BLOCK_EXPRESS_PAYMENT_SELECTORS). WooCommerce draws
+		 * these blocks in the browser even when their markup is left out of the page. Every express
+		 * payment method is drawn in the Express Checkout block, and the order buttons in the
+		 * Checkout Actions block's actions row (BLOCK_PLACE_ORDER_SELECTOR).
 		 *
 		 * @param string[] $block_names Inner block names without the woocommerce/ prefix.
+		 * @param string[] $selectors   CSS selectors, hidden as given.
 		 * @return string HTML.
 		 */
-		private static function order_actions_style( $block_names ) {
-			$selectors = self::BLOCK_EXPRESS_PAYMENT_SELECTORS;
+		private static function order_actions_style( $block_names, $selectors = array() ) {
+			$selectors = array_merge( self::BLOCK_EXPRESS_PAYMENT_SELECTORS, $selectors );
 			foreach ( $block_names as $name ) {
 				$selectors[] = '.wp-block-woocommerce-' . sanitize_html_class( $name );
 			}
