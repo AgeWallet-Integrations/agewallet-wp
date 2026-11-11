@@ -137,7 +137,9 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			add_action( 'woocommerce_review_order_after_submit', array( $this, 'close_order_actions' ), PHP_INT_MAX );
 			add_action( 'woocommerce_review_order_after_payment', array( $this, 'open_checkout_actions' ), PHP_INT_MIN );
 			add_action( 'woocommerce_review_order_after_payment', array( $this, 'close_order_actions' ), PHP_INT_MAX );
-			add_action( 'woocommerce_widget_shopping_cart_after_buttons', array( $this, 'open_mini_cart_actions' ), PHP_INT_MIN );
+			add_action( 'woocommerce_widget_shopping_cart_before_buttons', array( $this, 'open_mini_cart_actions' ), PHP_INT_MIN );
+			add_action( 'woocommerce_widget_shopping_cart_before_buttons', array( $this, 'close_order_actions' ), PHP_INT_MAX );
+			add_action( 'woocommerce_widget_shopping_cart_after_buttons', array( $this, 'open_mini_cart_after_buttons' ), PHP_INT_MIN );
 			add_action( 'woocommerce_widget_shopping_cart_after_buttons', array( $this, 'close_order_actions' ), PHP_INT_MAX );
 			add_filter( 'render_block_woocommerce/cart', array( $this, 'prepend_cart_block_notice' ) );
 			add_filter( 'render_block_woocommerce/checkout', array( $this, 'prepend_checkout_block_notice' ) );
@@ -564,10 +566,10 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * woocommerce_widget_shopping_cart_after_buttons, lowest priority (the classic mini-cart,
-		 * under its View cart and Checkout buttons): a style that hides everything inside the
+		 * woocommerce_widget_shopping_cart_before_buttons, lowest priority (the classic mini-cart,
+		 * above its View cart and Checkout buttons): a style that hides everything inside the
 		 * buttons area except those two, and a hidden wrapper around what payment plugins draw
-		 * after them, closed by close_order_actions() at the highest priority.
+		 * before them, closed by close_order_actions() at the highest priority.
 		 */
 		public function open_mini_cart_actions() {
 			if ( ! self::order_needs_verification() ) {
@@ -575,6 +577,17 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			}
 			echo '<style>p.woocommerce-mini-cart__buttons > :not(a.wc-forward){display:none!important;}</style>';
 			self::open_order_actions();
+		}
+
+		/**
+		 * woocommerce_widget_shopping_cart_after_buttons, lowest priority: a hidden wrapper around
+		 * what payment plugins draw under the mini-cart's buttons, closed by close_order_actions()
+		 * at the highest priority.
+		 */
+		public function open_mini_cart_after_buttons() {
+			if ( self::order_needs_verification() ) {
+				self::open_order_actions();
+			}
 		}
 
 		/** Opens the hidden wrapper around the checkout's or mini-cart's order buttons. */
