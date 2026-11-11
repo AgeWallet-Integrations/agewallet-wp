@@ -148,6 +148,7 @@ This plugin is licensed under the GNU General Public License v2.0 or later. A co
 
 = 1.6.1 =
 * Fix: On the Checkout block, only the Place order button is hidden until the shopper verifies. The order summary WooCommerce shows above the button on phones and narrow screens, and any notice beside the button, are no longer hidden with it.
+* Security: The server-side refusal of Store API checkout requests by unverified shoppers now matches the checkout route in any letter case, as WordPress routes it. Before this, a request with the route in other letter case was not refused.
 
 = 1.6.0 =
 * Feature: One "Age verification" choice per WooCommerce product, in the AgeWallet tab of Product data: Follow store rules, Require verification to view and buy, Require verification to buy only, or Never require verification. It replaces the Regulated status radios and, on products, the Age Restriction box (the box stays on pages and posts). Existing products keep their saved settings; a saved combination that matches no choice shows as Custom until a choice is saved. A hint under the choice says whether the product's page is gated and whether shoppers verify before buying it.
@@ -246,7 +247,7 @@ This plugin is licensed under the GNU General Public License v2.0 or later. A co
 == Upgrade Notice ==
 
 = 1.6.1 =
-Fix for the Checkout block: the order summary WooCommerce shows above Place order on phones and narrow screens is no longer hidden until the shopper verifies.
+Security fix: the Store API refusal of unverified orders now matches the checkout route in any letter case. Also the order summary WooCommerce shows above Place order on phones and narrow screens is no longer hidden until the shopper verifies.
 
 = 1.6.0 =
 One Age verification choice per product; shoppers add to the cart as usual and verify on the cart or checkout page; orders placed without verifying are refused on the server; express checkout buttons hidden until verified. Clear your page cache once after updating.

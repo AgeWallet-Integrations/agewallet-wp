@@ -75,9 +75,9 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 
 		/**
 		 * The Store API checkout route that places an order: POST /wc/store/v1/checkout
-		 * (also /wc/store/checkout).
+		 * (also /wc/store/checkout), matched in any letter case, as WordPress matches REST routes.
 		 */
-		const STORE_API_CHECKOUT_ROUTE = '#^/wc/store(?:/v\d+)?/checkout/?$#';
+		const STORE_API_CHECKOUT_ROUTE = '#^/wc/store(?:/v\d+)?/checkout/?$#i';
 
 		/**
 		 * The Cart and Checkout blocks' express payment area as WooCommerce draws it in the browser:
