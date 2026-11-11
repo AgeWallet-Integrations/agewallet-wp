@@ -104,6 +104,13 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 */
 		const BLOCK_PLACE_ORDER_SELECTOR = '.wp-block-woocommerce-checkout-actions-block .wc-block-checkout__actions_row > :not(.wc-block-components-checkout-return-to-cart-button)';
 
+		/**
+		 * The id of the launch form print_launch_form() prints after the classic checkout form. The
+		 * message under Place order (print_checkout_notice_below()) sits inside the checkout form, so
+		 * its Verify my age button submits this form by id instead of carrying a form of its own.
+		 */
+		const LAUNCH_FORM_ID = 'agewallet-launch';
+
 		public static function instance() {
 			if ( is_null( self::$instance ) ) {
 				self::$instance = new self();
@@ -135,6 +142,8 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			add_action( 'woocommerce_checkout_before_customer_details', array( $this, 'close_order_actions' ), 9 );
 			add_action( 'woocommerce_review_order_before_submit', array( $this, 'open_checkout_actions' ), PHP_INT_MIN );
 			add_action( 'woocommerce_review_order_after_submit', array( $this, 'close_order_actions' ), PHP_INT_MAX );
+			add_action( 'woocommerce_review_order_after_submit', array( $this, 'print_checkout_notice_below' ), PHP_INT_MAX );
+			add_action( 'woocommerce_after_checkout_form', array( $this, 'print_launch_form' ) );
 			add_action( 'woocommerce_review_order_after_payment', array( $this, 'open_checkout_actions' ), PHP_INT_MIN );
 			add_action( 'woocommerce_review_order_after_payment', array( $this, 'close_order_actions' ), PHP_INT_MAX );
 			add_action( 'woocommerce_widget_shopping_cart_before_buttons', array( $this, 'open_mini_cart_actions' ), PHP_INT_MIN );
@@ -511,21 +520,26 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 * back to the checkout, with the cart details in the verification's metadata
 		 * (inject_checkout_metadata()).
 		 *
+		 * @param bool   $below   True for the message under the checkout form: it carries the class
+		 *                        agewallet-verify-to-buy--below as well.
+		 * @param string $form_id The id of the launch form the button submits (notice_html()), or ''
+		 *                        for the message's own form.
 		 * @return string HTML.
 		 */
-		private static function checkout_notice_html() {
+		private static function checkout_notice_html( $below = false, $form_id = '' ) {
 			$text = AgeWalletOIDCClientPro::WC_GATE_MODE_FORCE_ALWAYS === self::checkout_gating_mode()
 				? __( 'Age verification is required before you can place an order.', 'agewallet-oidc-client' )
 				: __( 'Your cart contains regulated items that require age verification.', 'agewallet-oidc-client' );
-			return self::notice_html( $text, wc_get_checkout_url(), 'checkout', 'agewallet-verify-to-buy--order' );
+			$modifier = 'agewallet-verify-to-buy--order' . ( $below ? ' agewallet-verify-to-buy--below' : '' );
+			return self::notice_html( $text, wc_get_checkout_url(), 'checkout', $modifier, $form_id );
 		}
 
 		/**
 		 * woocommerce_proceed_to_checkout, priority 1 (the classic cart's checkout area, where
-		 * payment plugins draw their express buttons before Proceed to checkout at 20): the cart's
-		 * message, and a style that hides everything else in the area except Proceed to checkout
-		 * (a :has() rule that keeps a wrapper around the button, and a fallback rule inside
-		 * @supports for browsers without :has()).
+		 * payment plugins draw their express buttons before Proceed to checkout at 20): a style that
+		 * hides everything else in the area except Proceed to checkout (a :has() rule that keeps a
+		 * wrapper around the button, and a fallback rule inside @supports for browsers without
+		 * :has()), and the cart's message when the cart message is on (cart_notice_enabled()).
 		 */
 		public function print_cart_notice() {
 			if ( ! self::order_needs_verification() ) {
@@ -533,20 +547,57 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			}
 			echo '<style>.wc-proceed-to-checkout > :not(a.checkout-button):not(.agewallet-verify-to-buy):not(:has(a.checkout-button)){display:none!important;}'
 				. '@supports not selector(:has(a)){.wc-proceed-to-checkout > :not(a.checkout-button):not(.agewallet-verify-to-buy){display:none!important;}}</style>';
-			echo self::cart_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
+			if ( self::cart_notice_enabled() ) {
+				echo self::cart_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
+			}
 		}
 
 		/**
-		 * woocommerce_before_checkout_form, priority 1: the checkout's message at the top of the
-		 * classic checkout, and a style that hides WooCommerce's own pay buttons area
-		 * (wc_get_pay_buttons(), drawn above the customer details).
+		 * woocommerce_before_checkout_form, priority 1: a style that hides WooCommerce's own pay
+		 * buttons area (wc_get_pay_buttons(), drawn above the customer details), and the checkout's
+		 * message at the top of the classic checkout when its place is above or both
+		 * (checkout_notice_position()).
 		 */
 		public function print_checkout_notice() {
 			if ( ! self::order_needs_verification() ) {
 				return;
 			}
 			echo '<style>.woocommerce-pay-buttons{display:none!important;}</style>';
-			echo self::checkout_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
+			if ( self::checkout_notice_above() ) {
+				echo self::checkout_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
+			}
+		}
+
+		/**
+		 * woocommerce_review_order_after_submit, highest priority, registered after
+		 * close_order_actions() so it runs after it: the checkout's message just under the hidden
+		 * Place order wrapper, inside WooCommerce's place-order box, when the message's place is below
+		 * or both. Redrawn with every order review update, as the wrapper is. The hook fires inside
+		 * the checkout form, so the message's button submits the launch form of print_launch_form()
+		 * (LAUNCH_FORM_ID) instead of carrying its own.
+		 */
+		public function print_checkout_notice_below() {
+			if ( ! self::order_needs_verification() || ! self::checkout_notice_below() ) {
+				return;
+			}
+			echo self::checkout_notice_html( true, self::LAUNCH_FORM_ID ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
+		}
+
+		/**
+		 * woocommerce_after_checkout_form (just after the classic checkout form closes): the launch
+		 * form the message under Place order submits, when that message is shown. An empty POST form
+		 * with the launch address, outside the checkout form, printed once with the page so it is
+		 * still there after order review updates redraw the message.
+		 */
+		public function print_launch_form() {
+			if ( ! self::order_needs_verification() || ! self::checkout_notice_below() || ! class_exists( 'AgeWallet_Gating_Manager' ) ) {
+				return;
+			}
+			$launch = AgeWallet_Gating_Manager::get_verify_url( wc_get_checkout_url(), 'checkout' );
+			if ( '' === $launch ) {
+				return;
+			}
+			echo '<form id="' . esc_attr( self::LAUNCH_FORM_ID ) . '" method="post" action="' . esc_url( $launch ) . '" hidden style="display:none;"></form>';
 		}
 
 		/**
@@ -610,10 +661,11 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * render_block_woocommerce/cart: the cart's message above the Cart block, and its Express
-		 * Checkout area hidden (order_actions_style()). The Cart block changes the cart without
-		 * reloading the page, so the page reloads when an item is removed or added
-		 * (cart_block_reload_script()), and the message is decided again.
+		 * render_block_woocommerce/cart: the Cart block's Express Checkout area hidden
+		 * (order_actions_style()), and the cart's message above the block when the cart message is on
+		 * (cart_notice_enabled()). The Cart block changes the cart without reloading the page, so the
+		 * page reloads when an item is removed or added (cart_block_reload_script()), and the hiding
+		 * and the message are decided again.
 		 *
 		 * @param string $block_content The block's HTML.
 		 * @return string
@@ -623,7 +675,7 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 				return $block_content;
 			}
 			return self::order_actions_style( array( 'cart-express-payment-block' ) )
-				. self::cart_notice_html()
+				. ( self::cart_notice_enabled() ? self::cart_notice_html() : '' )
 				. wp_get_inline_script_tag( self::cart_block_reload_script() )
 				. $block_content;
 		}
@@ -644,9 +696,13 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
-		 * render_block_woocommerce/checkout: the checkout's message above the Checkout block, and
-		 * its Express Checkout area and order buttons (BLOCK_PLACE_ORDER_SELECTOR) hidden
-		 * (order_actions_style()).
+		 * render_block_woocommerce/checkout: the Checkout block's Express Checkout area and order
+		 * buttons (BLOCK_PLACE_ORDER_SELECTOR) hidden (order_actions_style()), and the checkout's
+		 * message above the block, after it, or both (checkout_notice_position()). After the block
+		 * it is under the whole block: on checkouts up to 920px wide directly under the Order summary
+		 * the Checkout Actions block draws above the order buttons, at full width under the form
+		 * column and the sidebar. The block is not a form at that level, so the message keeps its
+		 * own form.
 		 *
 		 * @param string $block_content The block's HTML.
 		 * @return string
@@ -656,7 +712,9 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 				return $block_content;
 			}
 			return self::order_actions_style( array( 'checkout-express-payment-block' ), array( self::BLOCK_PLACE_ORDER_SELECTOR ) )
-				. self::checkout_notice_html() . $block_content;
+				. ( self::checkout_notice_above() ? self::checkout_notice_html() : '' )
+				. $block_content
+				. ( self::checkout_notice_below() ? self::checkout_notice_html( true ) : '' );
 		}
 
 		/**
@@ -1044,20 +1102,27 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 * @param string $origin     The verification's origin marker (AgeWallet_Gating_Manager::get_verify_url()):
 		 *                           'cart' or 'checkout' adds the cart details to its metadata; '' decides from the page.
 		 * @param string $modifier   An extra class on the notice.
+		 * @param string $form_id    When given, the button submits the form with this id (the launch
+		 *                           form printed elsewhere on the page) and the notice has no form of
+		 *                           its own, for a notice that sits inside another form.
 		 * @return string HTML.
 		 */
-		private static function notice_html( $text, $return_url, $origin = '', $modifier = '' ) {
+		private static function notice_html( $text, $return_url, $origin = '', $modifier = '', $form_id = '' ) {
 			if ( ! class_exists( 'AgeWallet_Gating_Manager' ) || ! class_exists( 'AgeWallet_Helpers' ) ) {
 				return '';
 			}
-			$launch = AgeWallet_Gating_Manager::get_verify_url( $return_url, $origin );
+			$launch = '' === $form_id ? AgeWallet_Gating_Manager::get_verify_url( $return_url, $origin ) : '';
 			ob_start();
 			?>
 			<div class="<?php echo esc_attr( trim( 'agewallet-verify-to-buy ' . $modifier ) ); ?>" style="margin:12px 0;padding:12px 14px;border:1px solid currentColor;border-radius:6px;">
 				<p class="agewallet-verify-to-buy__text" style="margin:0 0 8px;"><?php echo esc_html( $text ); ?></p>
+				<?php if ( '' === $form_id ) : ?>
 				<form method="post" action="<?php echo esc_url( $launch ); ?>" style="margin:0;">
 					<button type="submit" class="button agewallet-verify-to-buy__btn"><?php esc_html_e( 'Verify my age', 'agewallet-oidc-client' ); ?></button>
 				</form>
+				<?php else : ?>
+				<button type="submit" form="<?php echo esc_attr( $form_id ); ?>" class="button agewallet-verify-to-buy__btn"><?php esc_html_e( 'Verify my age', 'agewallet-oidc-client' ); ?></button>
+				<?php endif; ?>
 				<p class="agewallet-verify-to-buy__note" style="margin:6px 0 0;font-size:0.85em;opacity:0.8;">
 					<?php
 					/* translators: %s: Verification partner name ("AgeWallet™"). */
@@ -1103,6 +1168,40 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 */
 		public static function checkout_gating_enabled() {
 			return AgeWalletOIDCClientPro::WC_GATE_MODE_OFF !== self::checkout_gating_mode();
+		}
+
+		/**
+		 * True when the cart page shows the Verify my age message
+		 * (AgeWalletOIDCClientPro::OPT_WC_CART_NOTICE, on until saved off). The cart's express buttons
+		 * are hidden either way.
+		 */
+		public static function cart_notice_enabled() {
+			return (bool) get_option( AgeWalletOIDCClientPro::OPT_WC_CART_NOTICE, 1 );
+		}
+
+		/**
+		 * Where the checkout shows the Verify my age message
+		 * (AgeWalletOIDCClientPro::OPT_WC_CHECKOUT_NOTICE_POSITION): one of WC_NOTICE_POSITION_ABOVE
+		 * (the default, and what any other stored value means), _BELOW or _BOTH.
+		 */
+		public static function checkout_notice_position() {
+			$raw     = get_option( AgeWalletOIDCClientPro::OPT_WC_CHECKOUT_NOTICE_POSITION, AgeWalletOIDCClientPro::WC_NOTICE_POSITION_ABOVE );
+			$allowed = array(
+				AgeWalletOIDCClientPro::WC_NOTICE_POSITION_ABOVE,
+				AgeWalletOIDCClientPro::WC_NOTICE_POSITION_BELOW,
+				AgeWalletOIDCClientPro::WC_NOTICE_POSITION_BOTH,
+			);
+			return in_array( $raw, $allowed, true ) ? $raw : AgeWalletOIDCClientPro::WC_NOTICE_POSITION_ABOVE;
+		}
+
+		/** True when the checkout's message is shown above the checkout form (above or both). */
+		private static function checkout_notice_above() {
+			return AgeWalletOIDCClientPro::WC_NOTICE_POSITION_BELOW !== self::checkout_notice_position();
+		}
+
+		/** True when the checkout's message is shown below the checkout form (below or both). */
+		private static function checkout_notice_below() {
+			return AgeWalletOIDCClientPro::WC_NOTICE_POSITION_ABOVE !== self::checkout_notice_position();
 		}
 
 		/**

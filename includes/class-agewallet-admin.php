@@ -173,9 +173,13 @@ class AgeWallet_Admin {
 		if ( class_exists( 'WooCommerce' ) ) {
 			register_setting( $this->group_guarding, AgeWalletOIDCClientPro::OPT_WC_GATE_CHECKOUT, array( 'sanitize_callback' => array( $this, 'sanitize_wc_gate_mode' ), 'default' => AgeWalletOIDCClientPro::WC_GATE_MODE_OFF ) );
 			register_setting( $this->group_guarding, AgeWalletOIDCClientPro::OPT_WC_METADATA_FIELDS, array( 'sanitize_callback' => array( $this, 'sanitize_wc_metadata_fields' ), 'default' => array( 'cart_hash', 'cart_total', 'currency' ) ) );
+			register_setting( $this->group_guarding, AgeWalletOIDCClientPro::OPT_WC_CART_NOTICE, array( 'sanitize_callback' => array( $this, 'sanitize_checkbox' ), 'default' => 1 ) );
+			register_setting( $this->group_guarding, AgeWalletOIDCClientPro::OPT_WC_CHECKOUT_NOTICE_POSITION, array( 'sanitize_callback' => array( $this, 'sanitize_wc_notice_position' ), 'default' => AgeWalletOIDCClientPro::WC_NOTICE_POSITION_ABOVE ) );
 
 			add_settings_section( 'agewallet_sec_wc', __( 'WooCommerce', 'agewallet-oidc-client' ), array( $this, 'render_wc_section_description' ), 'agewallet-guarding' );
 			add_settings_field( AgeWalletOIDCClientPro::OPT_WC_GATE_CHECKOUT, __( 'Checkout gating', 'agewallet-oidc-client' ), array( $this, 'render_wc_gate_mode_radio' ), 'agewallet-guarding', 'agewallet_sec_wc', array( 'label_for' => AgeWalletOIDCClientPro::OPT_WC_GATE_CHECKOUT ) );
+			add_settings_field( AgeWalletOIDCClientPro::OPT_WC_CART_NOTICE, __( 'Cart message', 'agewallet-oidc-client' ), array( $this, 'render_checkbox' ), 'agewallet-guarding', 'agewallet_sec_wc', array( 'label_for' => AgeWalletOIDCClientPro::OPT_WC_CART_NOTICE, 'default' => 1, 'label' => __( 'Show the age verification message on the cart page', 'agewallet-oidc-client' ), 'desc' => __( 'Shoppers must still verify their age before they can place an order.', 'agewallet-oidc-client' ) ) );
+			add_settings_field( AgeWalletOIDCClientPro::OPT_WC_CHECKOUT_NOTICE_POSITION, __( 'Where the checkout shows the message', 'agewallet-oidc-client' ), array( $this, 'render_wc_notice_position_radio' ), 'agewallet-guarding', 'agewallet_sec_wc', array( 'label_for' => AgeWalletOIDCClientPro::OPT_WC_CHECKOUT_NOTICE_POSITION ) );
 			add_settings_field( AgeWalletOIDCClientPro::OPT_WC_METADATA_FIELDS, __( 'Checkout metadata fields', 'agewallet-oidc-client' ), array( $this, 'render_wc_metadata_fields_ui' ), 'agewallet-guarding', 'agewallet_sec_wc' );
 		}
 
@@ -560,7 +564,7 @@ class AgeWallet_Admin {
 	}
 
 	public function render_wc_section_description() {
-		echo '<p>' . esc_html__( 'Choose which products shoppers must verify their age to buy. Shoppers browse and add to the cart as usual; the cart and checkout pages ask them to verify, and an order placed without verifying is refused. Per-checkout context (cart hash, total, etc.) is attached as metadata to verifications that start from the cart or checkout page.', 'agewallet-oidc-client' ) . '</p>';
+		echo '<p>' . esc_html__( 'Choose which products shoppers must verify their age to buy. Shoppers browse and add to the cart as usual; the cart and checkout pages ask them to verify (the Cart message and checkout message settings below choose where), and an order placed without verifying is refused. Per-checkout context (cart hash, total, etc.) is attached as metadata to verifications that start from the cart or checkout page.', 'agewallet-oidc-client' ) . '</p>';
 		echo '<p><strong>' . esc_html__( 'Express checkout.', 'agewallet-oidc-client' ) . '</strong> ' . esc_html__( 'AgeWallet hides the express checkout buttons that payment plugins place in WooCommerce\'s cart page checkout area, the classic mini-cart, the classic checkout (above the customer details and in the payment area) and the Cart and Checkout blocks\' express payment area until the shopper has verified, and it refuses any order an unverified shopper places through WooCommerce\'s checkout, the classic form or the Store API. Tested with WooPayments 11.2.0, WooCommerce Stripe 11.1.1 and WooCommerce PayPal Payments 4.2.0. Express buttons on product pages are not hidden: turn that location off in your payment plugin\'s settings. Anything else is not supported.', 'agewallet-oidc-client' ) . '</p>';
 		echo '<p class="description">' . esc_html__( 'The shopper\'s journey and the product settings are described in the Usage Guide (AgeWallet → Usage Guide). Use the `agewallet_wc_checkout_metadata` filter to fully customise the metadata payload from code.', 'agewallet-oidc-client' ) . '</p>';
 	}
@@ -685,7 +689,7 @@ class AgeWallet_Admin {
 
 	public function render_checkbox( $args ) {
 		$option_name = $args['label_for'];
-		$checked     = get_option( $option_name, 0 );
+		$checked     = get_option( $option_name, isset( $args['default'] ) ? $args['default'] : 0 );
 		$label_text  = isset( $args['label'] ) ? $args['label'] : '';
 		echo '<label for="' . esc_attr( $option_name ) . '">';
 		printf( '<input type="checkbox" id="%1$s" name="%1$s" value="1" %2$s />', esc_attr( $option_name ), checked( 1, $checked, false ) );
@@ -726,6 +730,33 @@ class AgeWallet_Admin {
 				checked( $value, $mode, false ),
 				esc_html( $entry['label'] ),
 				esc_html( $entry['desc'] )
+			);
+		}
+		echo '</fieldset>';
+	}
+
+	/**
+	 * The radios for where the checkout shows the age verification message
+	 * (AgeWalletOIDCClientPro::OPT_WC_CHECKOUT_NOTICE_POSITION): above the checkout form, below it, or both.
+	 *
+	 * @param array $args Field args; label_for is the option name.
+	 */
+	public function render_wc_notice_position_radio( $args ) {
+		$option_name = $args['label_for'];
+		$current     = AgeWallet_WooCommerce::checkout_notice_position();
+		$choices     = array(
+			AgeWalletOIDCClientPro::WC_NOTICE_POSITION_ABOVE => __( 'Above the checkout form', 'agewallet-oidc-client' ),
+			AgeWalletOIDCClientPro::WC_NOTICE_POSITION_BELOW => __( 'Below the checkout form, where Place order appears after verifying', 'agewallet-oidc-client' ),
+			AgeWalletOIDCClientPro::WC_NOTICE_POSITION_BOTH  => __( 'Both', 'agewallet-oidc-client' ),
+		);
+		echo '<fieldset class="aw-wc-notice-position">';
+		foreach ( $choices as $value => $label ) {
+			printf(
+				'<label style="display:block; margin-bottom:8px;"><input type="radio" name="%1$s" value="%2$s" %3$s /> %4$s</label>',
+				esc_attr( $option_name ),
+				esc_attr( $value ),
+				checked( $value, $current, false ),
+				esc_html( $label )
 			);
 		}
 		echo '</fieldset>';
@@ -1075,6 +1106,21 @@ class AgeWallet_Admin {
 			AgeWalletOIDCClientPro::WC_GATE_MODE_CONDITIONAL_CART,
 		);
 		return in_array( $input, $allowed, true ) ? $input : AgeWalletOIDCClientPro::WC_GATE_MODE_OFF;
+	}
+
+	/**
+	 * One of the WC_NOTICE_POSITION_* values; anything else saves as above, the default.
+	 *
+	 * @param mixed $input The posted value.
+	 * @return string
+	 */
+	public function sanitize_wc_notice_position( $input ) {
+		$allowed = array(
+			AgeWalletOIDCClientPro::WC_NOTICE_POSITION_ABOVE,
+			AgeWalletOIDCClientPro::WC_NOTICE_POSITION_BELOW,
+			AgeWalletOIDCClientPro::WC_NOTICE_POSITION_BOTH,
+		);
+		return in_array( $input, $allowed, true ) ? $input : AgeWalletOIDCClientPro::WC_NOTICE_POSITION_ABOVE;
 	}
 
 	public function sanitize_block_mode( $input ) {

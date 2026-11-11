@@ -64,11 +64,18 @@ Checkout gating chooses which products need verification to buy:
 * Only the products you flag: products set to Require verification (to buy only, or to view and buy), and products in a flagged category or tag. The cart and checkout ask the shopper to verify when the cart holds one.
 * All products except those you exempt: every product, except products set to Never require verification. Pick this when most of your catalog is age-restricted and carve out the few products that aren't.
 
+Two settings under Checkout gating choose where shoppers see the message:
+
+* Cart message, on by default. Untick "Show the age verification message on the cart page" and the cart page shows no message and no Verify my age button; shoppers verify at the checkout instead. Express checkout buttons stay hidden on the cart until the shopper verifies.
+* Where the checkout shows the message: Above the checkout form (the default), Below the checkout form, where Place order appears after verifying, or Both. The choice applies to the Checkout block and the classic checkout alike.
+
+Neither setting changes what the server refuses: an order placed without verifying is refused whatever they say.
+
 The shopper's journey, when unverified:
 
 * A product set to view and buy: its page shows the age gate, as any gated page does, and its card in listings (shop, category, tag and search pages, related products, product grid blocks, the Product Collection block) shows "Verify your age to view this product." with a Verify my age button that brings them back to the listing. Product images drawn outside WooCommerce's own cards, such as a theme's slider or a page-builder widget, are not covered.
 * A product set to buy only, or in a flagged category or tag: its page and its listing cards are as your theme draws them, and Add to cart works everywhere.
-* The cart page shows "Your order contains items that require age verification." with a Verify my age button above Proceed to checkout. The checkout page shows the message in place of Place order. Express checkout buttons (PayPal, Apple Pay, Google Pay and the like) are hidden on both, and in the classic mini-cart, until the shopper verifies.
+* The cart page shows "Your order contains items that require age verification." with a Verify my age button above Proceed to checkout, unless the Cart message setting is off. The checkout page shows the message above the checkout form, below it where Place order appears after verifying, or in both places, as the setting Where the checkout shows the message says. Express checkout buttons (PayPal, Apple Pay, Google Pay and the like) are hidden on both pages, and in the classic mini-cart, until the shopper verifies, whatever the two settings say.
 * Verify my age takes the shopper to AgeWallet and back to the same page with the cart intact. Place order and the express buttons then appear, and they pay.
 * An order placed without verifying is refused by the server before it exists, whether it comes through the classic checkout form, the Checkout block, an express button or a payment plugin that builds orders itself. The shopper sees "Age verification is required before you can place this order. Please verify your age at checkout."
 
