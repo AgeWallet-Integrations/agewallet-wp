@@ -523,13 +523,16 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		/**
 		 * woocommerce_proceed_to_checkout, priority 1 (the classic cart's checkout area, where
 		 * payment plugins draw their express buttons before Proceed to checkout at 20): the cart's
-		 * message, and a style that hides everything else in the area except Proceed to checkout.
+		 * message, and a style that hides everything else in the area except Proceed to checkout
+		 * (a :has() rule that keeps a wrapper around the button, and a fallback rule inside
+		 * @supports for browsers without :has()).
 		 */
 		public function print_cart_notice() {
 			if ( ! self::order_needs_verification() ) {
 				return;
 			}
-			echo '<style>.wc-proceed-to-checkout > :not(a.checkout-button):not(.agewallet-verify-to-buy):not(:has(a.checkout-button)){display:none!important;}</style>';
+			echo '<style>.wc-proceed-to-checkout > :not(a.checkout-button):not(.agewallet-verify-to-buy):not(:has(a.checkout-button)){display:none!important;}'
+				. '@supports not selector(:has(a)){.wc-proceed-to-checkout > :not(a.checkout-button):not(.agewallet-verify-to-buy){display:none!important;}}</style>';
 			echo self::cart_notice_html(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- escaped in notice_html().
 		}
 
