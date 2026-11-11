@@ -74,6 +74,12 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		const META_KEY_ORDER_NO_RECORD_NOTIFIED = '_agewallet_no_record_notified';
 
 		/**
+		 * Order meta key set to '1' by mark_scheduled_order() on orders created by WP-Cron or inside
+		 * an Action Scheduler job; monitor_order_status() leaves those orders alone.
+		 */
+		const META_KEY_ORDER_SCHEDULED = '_agewallet_created_by_scheduled_task';
+
+		/**
 		 * The Store API checkout route that places an order: POST /wc/store/v1/checkout
 		 * (also /wc/store/checkout), matched in any letter case, as WordPress matches REST routes.
 		 */
@@ -150,6 +156,7 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			add_action( 'woocommerce_checkout_order_processed', array( $this, 'record_classic_order' ), 10, 3 );
 			add_action( 'woocommerce_store_api_checkout_order_processed', array( $this, 'record_verification' ) );
 			add_action( 'woocommerce_after_order_object_save', array( $this, 'fire_pending_record_hook' ) );
+			add_action( 'woocommerce_before_order_object_save', array( $this, 'mark_scheduled_order' ), 4 );
 			add_action( 'woocommerce_order_status_changed', array( $this, 'monitor_order_status' ), 10, 4 );
 
 			// 5. The order edit screen shows the verification record under the order details.
@@ -932,11 +939,28 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		}
 
 		/**
+		 * woocommerce_before_order_object_save, priority 4: a new order (no id yet) saved by WP-Cron
+		 * or inside an Action Scheduler job is marked (META_KEY_ORDER_SCHEDULED), whatever the
+		 * Checkout gating setting. Existing orders are left alone.
+		 *
+		 * @param WC_Order $order The order being saved.
+		 */
+		public function mark_scheduled_order( $order ) {
+			if ( ! $order instanceof WC_Order || $order->get_id() ) {
+				return;
+			}
+			if ( wp_doing_cron() || did_action( 'action_scheduler_begin_execute' ) ) {
+				$order->update_meta_data( self::META_KEY_ORDER_SCHEDULED, '1' );
+			}
+		}
+
+		/**
 		 * woocommerce_order_status_changed: a paid order (processing or completed) that holds a
 		 * product needing verification but carries no verification record gets an order note, a
 		 * line in the WooCommerce log (source "agewallet") and one email to the site's admin
-		 * address, once (META_KEY_ORDER_NO_RECORD_NOTIFIED). Orders created in the admin, and
-		 * status changes made by cron or scheduled actions, are left alone.
+		 * address, once (META_KEY_ORDER_NO_RECORD_NOTIFIED). Orders created in the admin or by a
+		 * scheduled task (WP-Cron or Action Scheduler, marked at creation by mark_scheduled_order())
+		 * are left alone.
 		 *
 		 * @param int      $order_id
 		 * @param string   $from  The previous status.
@@ -957,7 +981,7 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 				|| '1' === (string) $order->get_meta( self::META_KEY_ORDER_NO_RECORD_NOTIFIED ) ) {
 				return;
 			}
-			if ( 'admin' === $order->get_created_via() || wp_doing_cron() || did_action( 'action_scheduler_begin_execute' ) ) {
+			if ( 'admin' === $order->get_created_via() || '1' === (string) $order->get_meta( self::META_KEY_ORDER_SCHEDULED ) ) {
 				return;
 			}
 			if ( ! self::order_holds_product_requiring_verification( $order ) ) {
