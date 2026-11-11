@@ -2,3 +2,10 @@
 # here, but excluded from `git archive` exports so they never ship in the plugin zip.
 .wordpress-org export-ignore
 .gitattributes export-ignore
+/tests export-ignore
+/.github export-ignore
+/composer.json export-ignore
+/composer.lock export-ignore
+/phpunit.xml.dist export-ignore
+/.phpcs.xml.dist export-ignore
+/.gitignore export-ignore

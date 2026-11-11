@@ -1,0 +1,6 @@
+/vendor/
+/build/
+/coverage/
+/coverage.txt
+/.phpunit.result.cache
+/.phpcs.cache

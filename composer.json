@@ -1,0 +1,37 @@
+{
+    "name": "agewallet/agewallet-wp",
+    "description": "Development dependencies of the AgeWallet WordPress plugin: unit tests and static checks. Not shipped with the plugin.",
+    "type": "wordpress-plugin",
+    "license": "GPL-2.0-or-later",
+    "require": {
+        "php": ">=7.4"
+    },
+    "require-dev": {
+        "brain/monkey": "^2.7",
+        "dealerdirect/phpcodesniffer-composer-installer": "^1.2",
+        "phpcompatibility/php-compatibility": "^10.0@alpha",
+        "phpcompatibility/phpcompatibility-paragonie": "^2.0@alpha",
+        "phpcompatibility/phpcompatibility-wp": "^3.0@alpha",
+        "phpunit/phpunit": "^9.6",
+        "squizlabs/php_codesniffer": "^3.13",
+        "wp-coding-standards/wpcs": "^3.4"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "AgeWallet\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "platform": {
+            "php": "7.4.33"
+        },
+        "sort-packages": true,
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "phpcs": "phpcs"
+    }
+}

@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer run on the same branch or pull request cancels the older one.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: PHP ${{ matrix.php }}
+    # Runs on the organisation repo only, never on personal forks.
+    if: github.repository == 'AgeWallet-Integrations/agewallet-wp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: json, dom, libxml, mbstring, tokenizer, xml, xmlwriter
+          coverage: ${{ matrix.php == '8.4' && 'pcov' || 'none' }}
+          tools: composer:v2
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      # composer.lock is resolved for PHP 7.4, so the same packages install on every version.
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Lint
+        run: find . -name '*.php' -not -path './vendor/*' -print0 | xargs -0 -n1 php -l
+
+      - name: Test
+        if: matrix.php != '8.4'
+        run: vendor/bin/phpunit
+
+      - name: Test with coverage
+        if: matrix.php == '8.4'
+        run: |
+          vendor/bin/phpunit --coverage-text=coverage.txt
+          { echo '### Coverage'; echo '```'; cat coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  static:
+    name: Static checks
+    if: github.repository == 'AgeWallet-Integrations/agewallet-wp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+          tools: composer:v2
+
+      - name: Install dependencies
+        run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: PHP_CodeSniffer
+        run: vendor/bin/phpcs --no-colors
+
+      - name: JavaScript syntax
+        run: for f in assets/js/*.js; do node --check "$f"; done
+
+      # The plugin ships as `git archive`; the test and tooling files are export-ignored.
+      - name: Development files stay out of the plugin
+        run: |
+          git archive HEAD | tar -t > "$RUNNER_TEMP/archive.txt"
+          if grep -E '^(tests/|\.github/|composer\.(json|lock)|phpunit\.xml\.dist|\.phpcs\.xml\.dist|\.gitignore|\.gitattributes|\.wordpress-org/)' "$RUNNER_TEMP/archive.txt"; then
+            echo 'The plugin archive holds development files'
+            exit 1
+          fi
+          wc -l < "$RUNNER_TEMP/archive.txt"
+
+  plugin-check:
+    name: Plugin Check
+    if: github.repository == 'AgeWallet-Integrations/agewallet-wp'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Plugin Check runs on the plugin as it ships, under its WordPress.org slug.
+      - name: Export the plugin
+        run: |
+          mkdir -p build/agewallet-oidc-client
+          git archive HEAD | tar -x -C build/agewallet-oidc-client
+
+      - uses: WordPress/plugin-check-action@v1
+        with:
+          build-dir: build/agewallet-oidc-client
+
+  # One check for the main ruleset to require: passes only when every job passed.
+  tests:
+    name: Tests
+    if: always() && github.repository == 'AgeWallet-Integrations/agewallet-wp'
+    needs: [test, static, plugin-check]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        run: |
+          test "${{ needs.test.result }}" = "success"
+          test "${{ needs.static.result }}" = "success"
+          test "${{ needs.plugin-check.result }}" = "success"

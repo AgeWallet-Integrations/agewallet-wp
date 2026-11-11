@@ -1,0 +1,46 @@
+<?xml version="1.0"?>
+<ruleset name="AgeWallet WordPress plugin">
+	<description>The static checks on the plugin's PHP files: compatibility with PHP 7.4 and later, and the WordPress security and database sniffs.</description>
+
+	<file>.</file>
+	<exclude-pattern>*/vendor/*</exclude-pattern>
+	<exclude-pattern>*/tests/*</exclude-pattern>
+	<exclude-pattern>*/build/*</exclude-pattern>
+	<exclude-pattern>*/node_modules/*</exclude-pattern>
+
+	<arg name="extensions" value="php"/>
+	<arg name="colors"/>
+	<arg value="sp"/>
+	<arg name="parallel" value="8"/>
+
+	<config name="testVersion" value="7.4-"/>
+	<config name="minimum_wp_version" value="6.0"/>
+
+	<rule ref="PHPCompatibilityWP"/>
+	<rule ref="WordPress.Security"/>
+	<rule ref="WordPress.DB"/>
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="agewallet-oidc-client"/>
+			</property>
+		</properties>
+	</rule>
+	<rule ref="WordPress.WP.DeprecatedFunctions"/>
+	<rule ref="WordPress.WP.DeprecatedClasses"/>
+	<rule ref="WordPress.WP.DeprecatedParameters"/>
+	<rule ref="WordPress.WP.DeprecatedParameterValues"/>
+	<rule ref="WordPress.WP.EnqueuedResources"/>
+	<rule ref="WordPress.WP.EnqueuedResourceParameters"/>
+	<rule ref="WordPress.WP.DiscouragedConstants"/>
+	<rule ref="WordPress.WP.PostsPerPage"/>
+	<rule ref="WordPress.PHP.StrictInArray"/>
+	<rule ref="WordPress.PHP.DevelopmentFunctions"/>
+	<rule ref="WordPress.PHP.DontExtract"/>
+	<rule ref="WordPress.PHP.RestrictedPHPFunctions"/>
+	<rule ref="WordPress.PHP.IniSet"/>
+	<rule ref="WordPress.PHP.PregQuoteDelimiter"/>
+	<rule ref="WordPress.PHP.TypeCasts"/>
+	<rule ref="WordPress.DateTime"/>
+	<rule ref="WordPress.CodeAnalysis.EscapedNotTranslated"/>
+</ruleset>
