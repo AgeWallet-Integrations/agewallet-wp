@@ -89,7 +89,7 @@ Yes. Standard (Overlay) mode is fully cache-compatible — the page HTML is the 
 
 Yes. Each product has an Age verification choice (Product data → AgeWallet tab): Follow store rules, Require verification to view and buy, Require verification to buy only, or Never require verification. Categories and tags can be marked Require age verification to buy, and the Checkout gating rule on the Content Guarding page chooses which products need verification: None, Only the products you flag, or All products except those you exempt. Shoppers browse and add to the cart as usual. The cart page shows a Verify my age message above Proceed to checkout (a setting turns it off), the checkout shows it above the checkout form, below it where Place order appears after verifying, or both (a setting chooses), and express checkout buttons are hidden until the shopper verifies. An order placed without verifying is refused by the server before it exists, whether it comes through the classic checkout, the Checkout block, an express button or a payment plugin that builds orders itself. Orders placed by verified shoppers carry a verification record.
 
-**Express checkout.** AgeWallet hides the express checkout buttons that payment plugins place in WooCommerce's cart page checkout area, the classic mini-cart, the classic checkout (above the customer details and in the payment area) and the Cart and Checkout blocks' express payment area until the shopper has verified, and it refuses any order an unverified shopper places through WooCommerce's checkout, the classic form or the Store API. Tested with WooPayments 11.2.0, WooCommerce Stripe 11.1.1 and WooCommerce PayPal Payments 4.2.0. Express buttons on product pages are not hidden: turn that location off in your payment plugin's settings. Anything else is not supported.
+**Express checkout.** Tested with WooPayments 11.2.0, WooCommerce Stripe 11.1.1 and WooCommerce PayPal Payments 4.2.0. Where the express checkout buttons are hidden until the shopper verifies, and the one place they are not (product pages), is in AgeWallet → Usage Guide.
 
 = How do I customize the look of the gate? =
 
@@ -130,14 +130,14 @@ Deleting the plugin from the Plugins screen runs `uninstall.php`, which removes 
     * Listing cards of products whose page is gated are masked until the shopper verifies.
     * Per-category and per-tag flags on the term-edit screens (products inherit from any of their categories or tags).
     * A verification record on every order placed by a verified shopper, shown on the order's edit screen, an action for it, and a note, log line and email for paid orders without one.
-    * Cart-context metadata (cart hash, total, currency, line-item count, billing country) attached to verifications that start from the cart or checkout page. In Conditional-on-Cart mode, these verifications also carry a cart_triggers audit trail that captures which products / categories / tags fired the gate.
+    * Cart-context metadata (cart hash, total, currency, line-item count, billing country) attached to verifications that start from the cart or checkout page. Under Only the products you flag, these verifications also carry a cart_triggers audit trail that captures which products, categories and tags fired the gate.
 * Metadata pass-through: attach an opaque per-verification string (up to 4 KB) — static text or auto-composed JSON of selected request-context fields — that round-trips through the OIDC flow and surfaces on the `/userinfo` response.
 
 == Screenshots ==
 
 1. The age gate overlay shown to unverified visitors in Standard (Overlay) mode.
 2. The plugin's setup wizard — Step 1 (API Credentials).
-3. The Content Guarding screen — taxonomy, path, and global protection rules, plus the WooCommerce "gate the checkout" setting.
+3. The Content Guarding screen: taxonomy, path and global protection rules, plus the WooCommerce Checkout gating rule and the cart and checkout message settings.
 4. The per-product Age verification choice on the WooCommerce product edit screen.
 
 == License ==
