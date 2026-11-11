@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AgeWallet OIDC Client
  * Description: Secure AgeWallet OIDC flow for WordPress using transients and client-side gating for cache compatibility.
- * Version:     1.6.0
+ * Version:     1.6.1
  * Author:      AgeWallet LLC
  * Author URI:  https://agewallet.com
  * Text Domain: agewallet-oidc-client
@@ -31,7 +31,7 @@ add_action( 'before_woocommerce_init', function () {
 } );
 
 // Define essential plugin constants.
-define( 'AGEWALLET_VERSION', '1.6.0' );
+define( 'AGEWALLET_VERSION', '1.6.1' );
 define( 'AGEWALLET_PLUGIN_FILE', __FILE__ );
 define( 'AGEWALLET_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'AGEWALLET_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -92,10 +92,19 @@ final class AgeWalletOIDCClientPro {
 	const OPT_WC_GATE_CHECKOUT      = 'agewallet_wc_gate_checkout';
 	const OPT_WC_METADATA_FIELDS    = 'agewallet_wc_checkout_metadata_fields';
 
+	// WooCommerce cart and checkout message options
+	const OPT_WC_CART_NOTICE              = 'agewallet_wc_cart_notice';              // 1 (default) or 0: the cart page shows the message
+	const OPT_WC_CHECKOUT_NOTICE_POSITION = 'agewallet_wc_checkout_notice_position'; // one of the WC_NOTICE_POSITION_* values
+
 	// WC checkout-gate mode values (stored in OPT_WC_GATE_CHECKOUT)
 	const WC_GATE_MODE_OFF              = 'off';
 	const WC_GATE_MODE_FORCE_ALWAYS     = 'force-always';
 	const WC_GATE_MODE_CONDITIONAL_CART = 'conditional-on-cart';
+
+	// Where the checkout shows the message (stored in OPT_WC_CHECKOUT_NOTICE_POSITION)
+	const WC_NOTICE_POSITION_ABOVE = 'above';
+	const WC_NOTICE_POSITION_BELOW = 'below';
+	const WC_NOTICE_POSITION_BOTH  = 'both';
 
 	// Metadata length cap (matches server-side acceptance limit)
 	const METADATA_MAX_BYTES = 4096;

@@ -90,6 +90,8 @@ Controls borders, background, and padding.
 
 * `.agewallet-verify-to-buy--loop` - The form around a masked listing card's Verify my age button.
 
+* `.agewallet-verify-to-buy--below` - The checkout page's notice when it is shown below the checkout form (the setting Where the checkout shows the message): inside WooCommerce's place-order box on the classic checkout, after the block on the Checkout block. Carries `.agewallet-verify-to-buy--order` too.
+
 * `.agewallet-verify-to-buy__text` - The notice text.
 
 * `.agewallet-verify-to-buy__btn` - The "Verify my age" button.
@@ -101,6 +103,24 @@ Controls borders, background, and padding.
 * `.agewallet-card-content` - Wraps a masked listing card's own content. Hidden until the shopper has verified.
 
 * `.agewallet-order-actions` - Wraps the express checkout buttons on the classic checkout and the classic mini-cart, and Place order, while the shopper is unverified. Hidden.
+
+= 9. WooCommerce: what is hidden until the shopper verifies =
+
+While the cart needs verification and the shopper hasn't verified, the plugin prints inline styles (`display:none!important`) that hide these WooCommerce elements. A verified shopper gets none of them.
+
+* Classic cart page: everything in `.wc-proceed-to-checkout` except the Proceed to checkout button (`a.checkout-button`) and the notice. A `:has()` rule keeps a wrapper around the button; a fallback rule inside `@supports not selector(:has(a))` applies in browsers without `:has()`, and that one also hides a theme's wrapper around the button.
+
+* Classic checkout: `.woocommerce-pay-buttons`, WooCommerce's own pay buttons area above the customer details.
+
+* Classic mini-cart: everything in `p.woocommerce-mini-cart__buttons` except the View cart and Checkout links (`a.wc-forward`).
+
+* Cart block and Checkout block: `.wc-block-cart__payment-options`, `.wc-block-components-express-payment`, `.wc-block-components-express-payment-continue-rule`, `.wp-block-woocommerce-cart-express-payment-block` and `.wp-block-woocommerce-checkout-express-payment-block`.
+
+* Checkout block: the order buttons in the Checkout Actions row, `.wp-block-woocommerce-checkout-actions-block .wc-block-checkout__actions_row > :not(.wc-block-components-checkout-return-to-cart-button)`, so Place order or the button the chosen payment method draws in its place. The Return to cart link, the order summary the block draws above the row on narrow checkouts, and its notices area stay visible.
+
+* `.agewallet-order-actions` (section 8): the hidden wrapper around what payment plugins draw on the classic checkout (above the customer details, around Place order, and under the payment area) and in the classic mini-cart (before and after its buttons).
+
+* `form#agewallet-launch`: a hidden, empty form printed after the classic checkout form when the notice is shown below the form. The notice's Verify my age button submits it, because the notice sits inside the checkout form.
 
 = Customization Tips =
 
