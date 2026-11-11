@@ -153,6 +153,7 @@ This plugin is licensed under the GNU General Public License v2.0 or later. A co
 * Fix: On the classic checkout, mini-cart and cart, express checkout buttons drawn at unusual hook priorities, before the mini-cart's buttons, or in browsers without the :has() selector are now hidden too.
 * Feature: A Cart message setting under Checkout gating turns the cart page's age verification message off; shoppers then verify at the checkout. Express checkout buttons stay hidden on the cart until the shopper verifies.
 * Feature: A setting for where the checkout shows the age verification message: above the checkout form, below it where Place order appears after verifying, or both. It applies to the Checkout block and the classic checkout.
+* Fix: The plugin's settings pages now show "Settings saved." after Save Changes, and any message a setting's check sends back.
 
 = 1.6.0 =
 * Feature: One "Age verification" choice per WooCommerce product, in the AgeWallet tab of Product data: Follow store rules, Require verification to view and buy, Require verification to buy only, or Never require verification. It replaces the Regulated status radios and, on products, the Age Restriction box (the box stays on pages and posts). Existing products keep their saved settings; a saved combination that matches no choice shows as Custom until a choice is saved. A hint under the choice says whether the product's page is gated and whether shoppers verify before buying it.

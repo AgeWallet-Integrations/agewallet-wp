@@ -282,6 +282,24 @@ class AgeWallet_Admin {
 		<?php
 	}
 
+	/**
+	 * The notices options.php sends back after a save ("Settings saved.", or the message a setting's
+	 * sanitizer registered with add_settings_error()), read with get_settings_errors() and printed as
+	 * inline admin notices under the page title. Inline, because WordPress's admin script moves a
+	 * plain notice into the title row, which on these pages is a flex row with the Get Support button.
+	 */
+	private function render_settings_notices() {
+		foreach ( get_settings_errors() as $error ) {
+			$type = 'updated' === $error['type'] ? 'success' : $error['type'];
+			printf(
+				'<div id="setting-error-%1$s" class="notice notice-%2$s settings-error inline is-dismissible"><p><strong>%3$s</strong></p></div>',
+				esc_attr( $error['code'] ),
+				esc_attr( sanitize_html_class( $type ) ),
+				esc_html( $error['message'] )
+			);
+		}
+	}
+
 	private function render_page_wrapper( $title, $callback, $option_group = null, $next_step = null ) {
 		?>
 		<div class="wrap">
@@ -292,6 +310,7 @@ class AgeWallet_Admin {
 			<hr style="margin: 0 0 20px 0;">
 
 			<?php $this->render_register_prompt_if_missing(); ?>
+			<?php $this->render_settings_notices(); ?>
 
 			<div style="display:flex; gap:20px; flex-wrap:wrap;">
 				<div style="flex: 1; min-width: 300px;">
