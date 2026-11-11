@@ -133,10 +133,10 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 			add_action( 'woocommerce_before_checkout_form', array( $this, 'print_checkout_notice' ), 1 );
 			add_action( 'woocommerce_checkout_before_customer_details', array( $this, 'open_checkout_actions' ), PHP_INT_MIN );
 			add_action( 'woocommerce_checkout_before_customer_details', array( $this, 'close_order_actions' ), 9 );
-			add_action( 'woocommerce_review_order_before_submit', array( $this, 'open_checkout_actions' ), 1 );
-			add_action( 'woocommerce_review_order_after_submit', array( $this, 'close_order_actions' ), 999 );
-			add_action( 'woocommerce_review_order_after_payment', array( $this, 'open_checkout_actions' ), 1 );
-			add_action( 'woocommerce_review_order_after_payment', array( $this, 'close_order_actions' ), 999 );
+			add_action( 'woocommerce_review_order_before_submit', array( $this, 'open_checkout_actions' ), PHP_INT_MIN );
+			add_action( 'woocommerce_review_order_after_submit', array( $this, 'close_order_actions' ), PHP_INT_MAX );
+			add_action( 'woocommerce_review_order_after_payment', array( $this, 'open_checkout_actions' ), PHP_INT_MIN );
+			add_action( 'woocommerce_review_order_after_payment', array( $this, 'close_order_actions' ), PHP_INT_MAX );
 			add_action( 'woocommerce_widget_shopping_cart_after_buttons', array( $this, 'open_mini_cart_actions' ), PHP_INT_MIN );
 			add_action( 'woocommerce_widget_shopping_cart_after_buttons', array( $this, 'close_order_actions' ), PHP_INT_MAX );
 			add_filter( 'render_block_woocommerce/cart', array( $this, 'prepend_cart_block_notice' ) );
@@ -549,10 +549,11 @@ if ( ! class_exists( 'AgeWallet_WooCommerce' ) ) {
 		 * close_order_actions():
 		 *   - woocommerce_checkout_before_customer_details, lowest priority to 9 (payment plugins'
 		 *     express buttons above the customer details);
-		 *   - woocommerce_review_order_before_submit 1 to woocommerce_review_order_after_submit 999
+		 *   - woocommerce_review_order_before_submit, lowest priority, to
+		 *     woocommerce_review_order_after_submit, highest priority
 		 *     (Place order and anything payment plugins put beside it, redrawn on every order
 		 *     review update);
-		 *   - woocommerce_review_order_after_payment 1 to 999 (the buttons payment plugins put
+		 *   - woocommerce_review_order_after_payment, lowest to highest priority (the buttons payment plugins put
 		 *     under the payment area, drawn once with the page).
 		 * The message is at the top of the page (print_checkout_notice()).
 		 */
