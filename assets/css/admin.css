@@ -29,3 +29,9 @@
 .aw-tax-specific-wrap { margin-top: 10px; padding-left: 10px; border-left: 2px solid #eee; }
 .aw-input-group { margin-bottom: 10px; }
 .aw-input-group label { display: block; font-weight: 600; margin-bottom: 4px; font-size: 12px; }
+
+/* The Usage Guide, CSS Guide and Developer Hooks pages (div.aw-doc from parse_readme_markdown()):
+   bullets, numbers and indent for their lists, which the admin's own stylesheet removes. */
+.aw-doc ul { list-style: disc; margin-left: 0; padding-left: 2em; }
+.aw-doc ol { list-style: decimal; margin-left: 0; padding-left: 2em; }
+.aw-doc li { margin-bottom: 6px; }
