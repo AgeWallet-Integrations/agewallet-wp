@@ -1232,19 +1232,30 @@ class AgeWallet_Admin {
 		return trim( $doc_content );
 	}
 
+	/**
+	 * A bundled guide's readme markup as HTML: = headings =, > quotes, * bullet and 1. numbered
+	 * lists, links, bold, italics and code, the rest as paragraphs. The result is wrapped in
+	 * div.aw-doc, which assets/css/admin.css gives list bullets and numbers (the admin's own
+	 * stylesheet removes them from every list).
+	 *
+	 * @param string $content Guide text, newlines normalised to "\n".
+	 * @return string HTML, for wp_kses_post().
+	 */
 	private function parse_readme_markdown( $content ) {
 		$content = preg_replace( '/^=\s*(.*?)\s*=/m', '<h3>$1</h3>', $content );
 		$content = preg_replace( '/^>(.*)/m', '<blockquote>$1</blockquote>', $content );
 		$content = str_replace( "</blockquote>\n<blockquote>", "\n", $content );
 		// Bullet items: lines that start with an asterisk and a space. A line that starts with
-		// bold text (**...**) is a paragraph.
+		// bold text (**...**) is a paragraph. A list always starts its own block (the leading
+		// newline), so a list written straight under a line of text is not folded into that
+		// line's paragraph.
 		$content = preg_replace_callback( '/(^\* .*(?:\n^\* .*)*)/m', function( $matches ) {
 			$items = preg_replace( '/^\* (.*)/m', '<li>$1</li>', $matches[0] );
-			return "<ul>\n" . $items . "\n</ul>\n";
+			return "\n<ul>\n" . $items . "\n</ul>\n";
 		}, $content );
 		$content = preg_replace_callback( '/(^(\d+\.)\s*.*(?:\n^\d+\.\s*.*)*)/m', function( $matches ) {
 			$items = preg_replace( '/^(\d+\.)\s*(.*)/m', '<li>$2</li>', $matches[0] );
-			return "<ol>\n" . $items . "\n</ol>\n";
+			return "\n<ol>\n" . $items . "\n</ol>\n";
 		}, $content );
 		$content = preg_replace( '/\[([^\]]+)\]\(([^)]+)\)/', '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>', $content );
 		$content = preg_replace( '/\*\*(.*?)\*\*/s', '<strong>$1</strong>', $content );
@@ -1265,7 +1276,7 @@ class AgeWallet_Admin {
 			}
 		}
 		$content = implode( "\n\n", $html_blocks );
-		return $content;
+		return '<div class="aw-doc">' . "\n" . $content . "\n</div>";
 	}
 
 	private function get_default_copy( $include_html = true ) {
